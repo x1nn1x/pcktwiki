@@ -1,7 +1,6 @@
-import { existsSync } from 'node:fs'
+import { cpSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSync } from 'node:child_process'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const coreDir = resolve(root, 'node_modules/silkdown-monorepo/packages/core')
@@ -16,14 +15,16 @@ if (!existsSync(coreDir)) {
   process.exit(0)
 }
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, stdio: 'inherit', shell: false })
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1)
-  }
+// Upstream ships the core package unbuilt, and building it needs a nested
+// `npm install` inside this repo's node_modules — which is unreliable (npm's
+// arborist crashes under `npm ci` on CI, and esbuild's binary loses its exec
+// bit locally). The built dist is therefore vendored at vendor/silkdown-core
+// instead. Re-vendor it if the pinned upstream
+// (github:magarcia/silkdown#main:packages/core) ever changes.
+const vendorDir = resolve(root, 'vendor/silkdown-core')
+if (!existsSync(resolve(vendorDir, 'index.js'))) {
+  console.warn('[build-silkdown] vendor/silkdown-core is missing; cannot stage dist')
+  process.exit(0)
 }
 
-// Install build tooling only. Peer @codemirror packages must resolve from the
-// app root — nested copies break Silkdown live preview under Vite.
-run('npm', ['install', '--omit=peer'], coreDir)
-run('npm', ['run', 'build'], coreDir)
+cpSync(vendorDir, resolve(coreDir, 'dist'), { recursive: true })

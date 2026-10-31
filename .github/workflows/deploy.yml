@@ -34,12 +34,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # --ignore-scripts: the app's postinstall builds the bundled silkdown
-      # monorepo with a nested `npm install`, whose arborist races the outer
-      # `npm ci` on a fresh checkout (locally silkdown is already built, so
-      # the script early-exits and the race never happens).
-      - run: npm ci --ignore-scripts
-      - run: node scripts/build-silkdown.mjs
+      # The postinstall stages the vendored silkdown dist (see
+      # scripts/build-silkdown.mjs) — no source build, no nested npm install.
+      - run: npm ci
       - run: npm run build
         env:
           # A repository variable named SITE_URL overrides the detected URL, for
