@@ -84,6 +84,13 @@ export function dockAccentFor(index: number): string {
 }
 
 /**
+ * Whether the OS-style bottom dock renders at all. The feature is complete
+ * (shared buttons, folder, settings manager) but hidden until wikis are
+ * configured for it — flip to true to bring it back.
+ */
+export const DOCK_ENABLED = false
+
+/**
  * How many bubbles render inline before the rest fold into the folder
  * button. The dock is a shelf, not an infinite strip — like the OS, five
  * plus a folder stays readable on every screen.

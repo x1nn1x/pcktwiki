@@ -42,7 +42,7 @@ import {
   listDockItems,
   resolveDockButtonArt,
 } from '@/lib/pckt-records'
-import type { DockLink } from '@/lib/wiki-dock'
+import { DOCK_ENABLED, type DockLink } from '@/lib/wiki-dock'
 import WikiEditable from '@/components/WikiEditable.vue'
 import WikiInlineNoteEditor from '@/components/WikiInlineNoteEditor.vue'
 import { isRateLimitUserMessage } from '@/lib/http-retry'
@@ -399,7 +399,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="wiki-view wiki-view--has-dock">
+  <div class="wiki-view" :class="{ 'wiki-view--has-dock': DOCK_ENABLED && dockLinks.length }">
     <WikiThemeRegionOverlay v-if="themeModeActive && canManageWiki" />
     <div
       class="wiki-layout"
@@ -654,7 +654,7 @@ onUnmounted(() => {
       </aside>
     </div>
     <WikiDock
-      v-if="dockLinks.length"
+      v-if="DOCK_ENABLED && dockLinks.length"
       :links="dockLinks"
       :owner-handle="handle"
       :wiki-slug="wikiSlug"

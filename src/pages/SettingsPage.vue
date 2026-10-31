@@ -13,6 +13,7 @@ import WikiMediaLibrary from '@/components/WikiMediaLibrary.vue'
 import HandleTypeahead from '@/components/HandleTypeahead.vue'
 import CollaborationSettings from '@/components/settings/CollaborationSettings.vue'
 import DockButtonsSettings from '@/components/settings/DockButtonsSettings.vue'
+import { DOCK_ENABLED } from '@/lib/wiki-dock'
 import { downloadWikiExport } from '@/lib/export/wiki-bundle'
 import WikiImportButton from '@/components/WikiImportButton.vue'
 import { applyWikiTheme, loadLocalTheme, saveLocalTheme, themeFromWiki } from '@/lib/theme'
@@ -471,7 +472,7 @@ async function purgeWikiNow() {
 
       <CollaborationSettings v-if="canManageWiki && lichen.currentWiki" />
 
-      <DockButtonsSettings v-if="canManageWiki && lichen.currentWiki" />
+      <DockButtonsSettings v-if="DOCK_ENABLED && canManageWiki && lichen.currentWiki" />
 
       <WikiHeaderImageEditor v-if="canManageWiki && lichen.currentWiki" />
 
