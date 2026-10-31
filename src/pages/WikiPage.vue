@@ -32,7 +32,10 @@ import ForkSyncPanel from '@/components/ForkSyncPanel.vue'
 import ForksOfWikiPanel from '@/components/ForksOfWikiPanel.vue'
 import JoinRequestBanner from '@/components/JoinRequestBanner.vue'
 import PhotoSubmitCard from '@/components/PhotoSubmitCard.vue'
+import WikiDock from '@/components/WikiDock.vue'
 import RateLimitSignInHint from '@/components/RateLimitSignInHint.vue'
+import { getPublicWikiCache } from '@/lib/lichen/wiki-cache'
+import type { DockLink } from '@/lib/wiki-dock'
 import WikiEditable from '@/components/WikiEditable.vue'
 import WikiInlineNoteEditor from '@/components/WikiInlineNoteEditor.vue'
 import { isRateLimitUserMessage } from '@/lib/http-retry'
@@ -194,6 +197,18 @@ const noteCaps = computed(() =>
 const canEditWiki = computed(() => noteCaps.value.canPublish || noteCaps.value.canSuggest)
 const canPublishWiki = computed(() => noteCaps.value.canPublish)
 const canManageWiki = computed(() => canManage(lichen.access))
+
+/**
+ * The OS-style bottom dock mirrors the wiki's own editable navbar links — the
+ * same list the site topbar renders, from the live wiki record or the public
+ * cache while metadata is still loading.
+ */
+const dockLinks = computed((): DockLink[] => {
+  const live = lichen.currentWiki
+  if (live?.navbarLinks?.length) return live.navbarLinks
+  const cached = getPublicWikiCache(handle.value, wikiSlug.value, Number.POSITIVE_INFINITY)
+  return cached?.wiki?.navbarLinks ?? []
+})
 const showRateLimitSignInHint = computed(
   () => !auth.isAuthenticated && isRateLimitUserMessage(lichen.error),
 )
@@ -304,7 +319,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="wiki-view">
+  <div class="wiki-view wiki-view--has-dock">
     <WikiThemeRegionOverlay v-if="themeModeActive && canManageWiki" />
     <div
       class="wiki-layout"
@@ -520,6 +535,13 @@ onUnmounted(() => {
         />
       </aside>
     </div>
+    <WikiDock
+      v-if="dockLinks.length"
+      :links="dockLinks"
+      :owner-handle="handle"
+      :wiki-slug="wikiSlug"
+      :active-slug="noteSlug"
+    />
 
   </div>
 </template>
@@ -528,6 +550,12 @@ onUnmounted(() => {
 .wiki-view {
   padding: 0 0 4rem;
   background: var(--pckt-bg);
+}
+
+/* The floating dock clears the stage so scrolled content never slides
+   behind the bubbles — same contract as the OS shell's dock clearance. */
+.wiki-view--has-dock {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }
 
 .wiki-layout {
