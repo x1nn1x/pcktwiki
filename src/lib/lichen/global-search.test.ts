@@ -53,14 +53,14 @@ describe('pdsHostFromHandle', () => {
   })
 
   it('drops the subdomain of a longer handle', () => {
-    expect(pdsHostFromHandle('oseanworldwiki.bsky.social')).toBe('bsky.social')
+    expect(pdsHostFromHandle('oseanstudio.bsky.social')).toBe('bsky.social')
     expect(pdsHostFromHandle('theriveroflight.sayitditto.net')).toBe('sayitditto.net')
   })
 })
 
 describe('searchGlobalIndex', () => {
   const index = makeIndex([
-    wiki('oseanworldwiki.bsky.social', 'oseanworld', 'OSEAN WORLD'),
+    wiki('oseanstudio.bsky.social', 'oseanworld', 'OSEAN WORLD'),
     wiki('kyefox.com', 'foxes', 'Foxes'),
   ])
 

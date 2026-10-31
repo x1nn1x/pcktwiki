@@ -14,7 +14,7 @@ export const FEATURED_WIKI_HANDLES = [
   'rechargednintendo.eurosky.social/florets-retreat',
   'windfreaker.dev/digital-garden',
   'myrkvi.no/test',
-  'oseanworldwiki.bsky.social/oseanworld',
+  'oseanstudio.bsky.social/oseanworld',
 ] as const
 
 export type FeaturedWikiHandle = (typeof FEATURED_WIKI_HANDLES)[number]
@@ -25,5 +25,5 @@ export type FeaturedWikiHandle = (typeof FEATURED_WIKI_HANDLES)[number]
  * form as the catalog above and are loaded even when absent from it.
  */
 export const FEATURED_SPOTLIGHT_HANDLES = [
-  'oseanworldwiki.bsky.social/oseanworld',
+  'oseanstudio.bsky.social/oseanworld',
 ] as const
