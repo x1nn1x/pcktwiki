@@ -43,6 +43,10 @@ jobs:
           # deployments that do not go through GitHub Pages.
           VITE_SITE_URL: ${{ vars.SITE_URL || steps.pages.outputs.base_url }}
           SITE_NAME: ${{ vars.SITE_NAME }}
+          # The snapshot fetch's keep-alive sockets hold the event loop open and
+          # the build never exits, so CI ships the committed snapshot instead;
+          # local builds regenerate it.
+          SKIP_GUEST_FEED_SNAPSHOT: '1'
 
       - uses: actions/upload-pages-artifact@v3
         with:
