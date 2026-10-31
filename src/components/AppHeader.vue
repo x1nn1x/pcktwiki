@@ -417,10 +417,27 @@ function onBrandMenuClick(event: Event, toggle: (event: Event) => void) {
               :class="editModeActive ? 'btn-primary' : 'btn-ghost'"
               :aria-pressed="editModeActive"
               :disabled="editSaving || themeModeActive"
-              :title="editModeActive ? 'Save every open editor and leave edit mode' : 'Enter edit mode'"
+              :title="editModeActive ? 'Save every open editor and leave edit mode' : 'Edit'"
+              :aria-label="editModeActive ? 'Save every open editor and leave edit mode' : 'Edit'"
               @click="onEditModeClick"
             >
-              {{ editModeActive ? (editSaving ? 'Saving…' : 'Save') : 'Edit' }}
+              <!-- Resting state is a pencil icon (tooltip: Edit); while saving
+                   everything the button says so in words. -->
+              <svg
+                v-if="!editModeActive"
+                class="header-edit-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1 1 0 0 0 0-1.41l-2.51-2.51a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.99-1.66z"
+                />
+              </svg>
+              <template v-else>{{ editSaving ? 'Saving…' : 'Save' }}</template>
             </button>
             <button
               v-if="canUseThemeMode && themeModeActive"
@@ -658,6 +675,20 @@ header.header-has-wiki-nav .header-wiki-nav {
   display: block;
   pointer-events: none;
   user-select: none;
+}
+
+.header-edit-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0.25rem 0.5rem;
+  line-height: 0;
+}
+
+.header-edit-icon {
+  display: block;
+  flex-shrink: 0;
 }
 
 .nav {
