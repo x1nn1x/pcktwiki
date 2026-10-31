@@ -4,7 +4,6 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
-import { useKeyboardNav } from '@/composables/useKeyboardNavProvider'
 import PcktSparkLogomark from '@/components/PcktSparkLogomark.vue'
 import LandingSignInCard from '@/components/landing/LandingSignInCard.vue'
 import HeaderNavMenu from '@/components/HeaderNavMenu.vue'
@@ -27,7 +26,6 @@ import type { LichenBlobRef, LichenNavLink } from '@/types/lichen'
 const auth = useAuthStore()
 const lichen = useLichenStore()
 const route = useRoute()
-const nav = useKeyboardNav()
 const {
   active: editModeActive,
   openTarget,
@@ -457,16 +455,9 @@ function onBrandMenuClick(event: Event, toggle: (event: Event) => void) {
             <HeaderNotifications />
             <HeaderProfileMenu />
           </template>
-          <ThemeModeToggle />
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm kb-help-btn"
-            title="Keyboard shortcuts (?)"
-            aria-label="Keyboard shortcuts"
-            @click="nav.helpOpen.value = true"
-          >
-            ?
-          </button>
+          <!-- Signed-in users reach these from the profile menu; guests keep the
+               quick theme toggle on the bar. -->
+          <ThemeModeToggle v-if="!auth.isAuthenticated" />
         </div>
       </nav>
     </div>
@@ -700,13 +691,6 @@ header.header:not(.header-home) .nav {
   margin-left: auto;
 }
 
-.kb-help-btn {
-  min-width: 2rem;
-  padding: 0.25rem 0.5rem;
-  font-family: var(--pckt-font-mono);
-  font-weight: 700;
-}
-
 @media (max-width: 1100px) {
   header.header-minimal .brand-area {
     min-width: 0;
@@ -714,10 +698,6 @@ header.header:not(.header-home) .nav {
 }
 
 @media (max-width: 720px) {
-  .kb-help-btn {
-    display: none;
-  }
-
   .nav {
     max-width: none;
   }

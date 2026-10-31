@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useMenuDismissGroup } from '@/composables/useMenuDismissGroup'
 import { useOverlayDismiss } from '@/composables/useOverlayDismiss'
+import { useKeyboardNav } from '@/composables/useKeyboardNavProvider'
+import { useThemeMode } from '@/composables/useThemeMode'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
 import { wikiPath } from '@/data/featured-wikis'
@@ -20,6 +22,8 @@ interface MenuLink {
 
 const auth = useAuthStore()
 const lichen = useLichenStore()
+const nav = useKeyboardNav()
+const { mode: themeMode, label: themeLabel, nextLabel: themeNextLabel, cycleMode } = useThemeMode()
 const open = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const menuLoaded = ref(false)
@@ -53,6 +57,12 @@ function dotColor(index: number): (typeof DOT_COLORS)[number] {
 function close() {
   cancelRename()
   open.value = false
+}
+
+/** Open the keyboard-shortcut sheet from the menu, closing the menu first. */
+function openKeyboardHelp() {
+  close()
+  nav.helpOpen.value = true
 }
 
 const { closeOtherMenus } = useMenuDismissGroup(open, close)
@@ -291,6 +301,74 @@ watch(open, (isOpen) => {
                 </svg>
               </button>
             </div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="account-menu-section">
+        <h3 class="account-menu-section-title">Preferences</h3>
+        <ul class="account-menu-list">
+          <li>
+            <button
+              type="button"
+              class="account-menu-link"
+              role="menuitem"
+              :title="`Switch to ${themeNextLabel.toLowerCase()}`"
+              @click.stop="cycleMode"
+            >
+              <span class="account-menu-icon" aria-hidden="true">
+                <!-- Sun -->
+                <svg v-if="themeMode === 'light'" viewBox="0 0 24 24" width="18" height="18">
+                  <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2" />
+                  <path
+                    d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <!-- Moon -->
+                <svg v-else-if="themeMode === 'dark'" viewBox="0 0 24 24" width="18" height="18">
+                  <path
+                    d="M21 14.5A8.5 8.5 0 0 1 9.5 3 7 7 0 1 0 21 14.5z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <!-- Auto -->
+                <svg v-else viewBox="0 0 24 24" width="18" height="18">
+                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+                  <path d="M12 3a9 9 0 0 0 0 18V3z" fill="currentColor" />
+                </svg>
+              </span>
+              <span>Appearance · {{ themeLabel }}</span>
+            </button>
+          </li>
+          <li>
+            <button
+              type="button"
+              class="account-menu-link"
+              role="menuitem"
+              title="Keyboard shortcuts (?)"
+              @click.stop="openKeyboardHelp"
+            >
+              <span class="account-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18">
+                  <rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+                  <path
+                    d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </span>
+              <span>Keyboard shortcuts</span>
+            </button>
           </li>
         </ul>
       </section>
@@ -615,6 +693,15 @@ watch(open, (isOpen) => {
 
 .account-menu-dot-yellow {
   background: var(--pckt-yellow);
+}
+
+.account-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex: none;
+  color: var(--pckt-text-muted);
 }
 
 .account-menu-footer {
