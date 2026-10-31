@@ -83,10 +83,36 @@ export function dockAccentFor(index: number): string {
   return DOCK_ACCENTS[index % DOCK_ACCENTS.length]
 }
 
+/**
+ * How many bubbles render inline before the rest fold into the folder
+ * button. The dock is a shelf, not an infinite strip — like the OS, five
+ * plus a folder stays readable on every screen.
+ */
+export const DOCK_INLINE_LIMIT = 5
+
+/** Split dock links into the inline row and the folder's contents. */
+export function splitDockRow<T extends { label: string }>(
+  links: T[],
+): { inline: T[]; folder: T[] } {
+  if (links.length <= DOCK_INLINE_LIMIT + 1) {
+    return { inline: links, folder: [] }
+  }
+  return {
+    inline: links.slice(0, DOCK_INLINE_LIMIT),
+    folder: links.slice(DOCK_INLINE_LIMIT),
+  }
+}
+
 export interface DockLink {
   label: string
   /** Internal note slug/path, or an absolute http(s)/mailto/tel URL. */
   url: string
+  /**
+   * Ready bubble art URL — a shared button's blob from its creator's PDS, or
+   * a wiki-owned blob. When absent, the label's OS bubble art (then a letter
+   * bubble) is used.
+   */
+  artUrl?: string
 }
 
 export function isExternalDockUrl(url: string): boolean {

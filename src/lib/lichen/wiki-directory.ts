@@ -175,3 +175,93 @@ export async function loadWikiDirectory(options?: { force?: boolean }): Promise<
     if (inflight === run) inflight = null
   }
 }
+
+// ---------------------------------------------------------------------------
+// Live stats — article counts and last activity per owner DID, powering the
+// directory's live cards. One pass per owner (not per wiki), cached an hour.
+// ---------------------------------------------------------------------------
+
+export interface DirectoryStats {
+  notes: number
+  lastActivity: string | null
+}
+
+const STATS_KEY = 'pckt.wiki.wiki-directory-stats'
+const STATS_TTL_MS = 60 * 60 * 1000
+
+let statsMemory: { values: Record<string, DirectoryStats>; fetchedAt: Record<string, number> } | null =
+  null
+
+function readStats() {
+  if (statsMemory) return statsMemory
+  if (typeof localStorage === 'undefined') {
+    statsMemory = { values: {}, fetchedAt: {} }
+    return statsMemory
+  }
+  try {
+    statsMemory = {
+      values: JSON.parse(localStorage.getItem(STATS_KEY) ?? '{}'),
+      fetchedAt: JSON.parse(localStorage.getItem(`${STATS_KEY}.at`) ?? '{}'),
+    }
+  } catch {
+    statsMemory = { values: {}, fetchedAt: {} }
+  }
+  return statsMemory
+}
+
+function writeStats(entry: { values: Record<string, DirectoryStats>; fetchedAt: Record<string, number> }) {
+  statsMemory = entry
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(STATS_KEY, JSON.stringify(entry.values))
+    localStorage.setItem(`${STATS_KEY}.at`, JSON.stringify(entry.fetchedAt))
+  } catch {
+    // quota — the memory cache still serves this session
+  }
+}
+
+async function loadRepoStats(did: string): Promise<DirectoryStats> {
+  const { pdsUrl } = await resolveDidDoc(did)
+  const agent = new Agent({ service: pdsUrl, fetch: createRetryFetch() })
+  const { listNotes } = await import('@/lib/atproto/lichen')
+  const notes = await listNotes(agent, did)
+  let lastActivity: string | null = null
+  try {
+    // reverse=true returns the newest revision first — one record is enough
+    // to date the wiki's last activity without listing its whole history.
+    const response = await agent.com.atproto.repo.listRecords({
+      repo: did,
+      collection: COLLECTIONS.noteRevision,
+      limit: 1,
+      reverse: true,
+    })
+    const newest = response.data.records[0]
+    if (newest) lastActivity = String((newest.value as Record<string, unknown>).createdAt ?? '')
+  } catch {
+    // no revisions reachable — activity stays null
+  }
+  return { notes: notes.length, lastActivity }
+}
+
+/** Article counts + last activity for each owner DID, cached for an hour. */
+export async function loadDirectoryStats(
+  dids: string[],
+): Promise<Record<string, DirectoryStats>> {
+  const entry = readStats()
+  const stale = dids.filter((did) => Date.now() - (entry.fetchedAt[did] ?? 0) > STATS_TTL_MS)
+
+  if (stale.length) {
+    const results = await runSettledWithConcurrency(stale, WIKI_DIRECTORY_CONCURRENCY, (did) =>
+      loadRepoStats(did),
+    )
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') entry.values[stale[index]] = result.value
+      entry.fetchedAt[stale[index]] = Date.now()
+    })
+    writeStats(entry)
+  }
+
+  const out: Record<string, DirectoryStats> = {}
+  for (const did of dids) out[did] = entry.values[did] ?? { notes: 0, lastActivity: null }
+  return out
+}

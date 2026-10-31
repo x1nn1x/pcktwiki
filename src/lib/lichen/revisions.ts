@@ -13,7 +13,7 @@ export interface NoteContentState {
 }
 
 /** Written every Nth revision so a broken diff cannot invalidate the rest. */
-export const SNAPSHOT_INTERVAL = 10
+export const SNAPSHOT_INTERVAL = 5
 
 /**
  * Whether a note's next revision should carry a full-text snapshot, given how

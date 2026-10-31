@@ -75,6 +75,8 @@ async function load() {
     viewerDid: auth.did,
     authAgent: auth.agent,
   })
+  // Suggestions replay branch revisions, which page views load newest-first.
+  await lichen.ensureFullHistory(auth.agent)
   if (auth.agent && canReviewWiki.value && lichen.currentWiki) {
     void lichen.refreshIncomingSuggestions(auth.agent)
     for (const suggestion of lichen.incomingSuggestions) {

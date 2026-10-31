@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import WikiPortalBox from '@/components/WikiPortalBox.vue'
 import WikiAvatar from '@/components/WikiAvatar.vue'
 import WikiPortalColumns from '@/components/WikiPortalColumns.vue'
@@ -10,19 +10,105 @@ import GlobalWikiSearch from '@/components/GlobalWikiSearch.vue'
 import { wikiPath } from '@/data/featured-wikis'
 import { useFeaturedWikis } from '@/composables/useFeaturedWikis'
 import { discoverRecentWikis, type DiscoveredWiki } from '@/lib/constellation/wiki-discovery'
+import {
+  loadDirectoryStats,
+  loadWikiDirectory,
+  type DirectoryWiki,
+} from '@/lib/lichen/wiki-directory'
+import { remixWiki } from '@/lib/lichen/fork-wiki'
+import { useAuthStore } from '@/stores/auth'
 
 const { stats, sortedWikis } = useFeaturedWikis()
-const tab = ref<'featured' | 'recent' | 'topics'>('featured')
+const auth = useAuthStore()
+const router = useRouter()
+const tab = ref<'all' | 'featured' | 'recent' | 'topics'>('all')
 const discovered = ref<DiscoveredWiki[]>([])
 
 const guestFeed = useGuestFeed()
+
+// Live directory — every public wiki the relay knows about, with live
+// article counts and last-activity dates instead of a curated list.
+const directory = ref<DirectoryWiki[]>([])
+const directoryStats = ref<Record<string, { notes: number; lastActivity: string | null }>>({})
+const directoryLoading = ref(false)
+const search = ref('')
+const remixing = ref('')
+const remixError = ref('')
 
 onMounted(() => {
   void guestFeed.load()
   void discoverRecentWikis().then((items) => {
     discovered.value = items
   })
+  void loadLiveDirectory()
 })
+
+async function loadLiveDirectory() {
+  directoryLoading.value = true
+  try {
+    const wikis = await loadWikiDirectory()
+    directory.value = wikis
+    const dids = [...new Set(wikis.map((w) => w.did).filter(Boolean))]
+    directoryStats.value = await loadDirectoryStats(dids)
+  } catch {
+    // the directory tab simply stays empty on failure
+  } finally {
+    directoryLoading.value = false
+  }
+}
+
+const allWikis = computed(() => {
+  const query = search.value.trim().toLowerCase()
+  const rows = directory.value.filter((wiki) => {
+    if (!query) return true
+    return (
+      wiki.name.toLowerCase().includes(query) ||
+      wiki.slug.toLowerCase().includes(query) ||
+      wiki.handle.toLowerCase().includes(query) ||
+      wiki.description.toLowerCase().includes(query)
+    )
+  })
+  return rows.sort((a, b) => {
+    const aAt = directoryStats.value[a.did]?.lastActivity ?? ''
+    const bAt = directoryStats.value[b.did]?.lastActivity ?? ''
+    return bAt.localeCompare(aAt) || a.name.localeCompare(b.name)
+  })
+})
+
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const diff = Date.now() - Date.parse(iso)
+  if (Number.isNaN(diff)) return '—'
+  const days = Math.floor(diff / 86_400_000)
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}mo ago`
+  return `${Math.floor(months / 12)}y ago`
+}
+
+const remixDone = ref('')
+async function remix(target: DirectoryWiki) {
+  if (!auth.agent) {
+    router.push({ name: 'home', query: { redirect: '/wikis' } })
+    return
+  }
+  const key = `${target.handle}/${target.slug}`
+  remixing.value = key
+  remixError.value = ''
+  try {
+    const wiki = await remixWiki(auth.agent, target.handle, target.slug, {
+      forkHandle: auth.handle ?? '',
+    })
+    remixDone.value = `Remixed as ${wiki.slug} — opening it…`
+    await router.push(`/@${auth.handle}/${wiki.slug}`)
+  } catch (err) {
+    remixError.value = err instanceof Error ? err.message : 'Could not remix that wiki'
+  } finally {
+    remixing.value = ''
+  }
+}
 </script>
 
 <template>
@@ -85,22 +171,71 @@ onMounted(() => {
       >
         <div class="directory-tabs">
           <button
-            v-for="option in ['featured', 'recent', 'topics'] as const"
+            v-for="option in ['all', 'featured', 'recent', 'topics'] as const"
             :key="option"
             type="button"
             class="btn btn-ghost btn-sm"
             :class="{ active: tab === option }"
             @click="tab = option"
           >
-            {{ option === 'featured' ? 'Featured' : option === 'recent' ? 'Recently active' : 'Topics' }}
+            {{ option === 'all' ? 'All wikis' : option === 'featured' ? 'Featured' : option === 'recent' ? 'Recently active' : 'Topics' }}
           </button>
         </div>
 
-        <p class="directory-intro muted">
-          Every wiki below is stored on its author's PDS and opens in pckt.wiki.
-        </p>
+        <template v-if="tab === 'all'">
+          <input
+            v-model="search"
+            class="input directory-search"
+            type="search"
+            placeholder="Search every public wiki on the network…"
+            aria-label="Search the wiki directory"
+          />
+          <div v-if="directoryLoading" class="muted">Crawling the network…</div>
+          <template v-else>
+            <p class="directory-intro muted">
+              {{ allWikis.length }} wikis, newest activity first. Remix any of them into your
+              own editable copy.
+            </p>
+            <p v-if="remixDone" class="muted">{{ remixDone }}</p>
+            <p v-if="remixError" class="error-text">{{ remixError }}</p>
+            <ul class="directory-grid">
+              <li v-for="wiki in allWikis" :key="`${wiki.handle}-${wiki.slug}`">
+                <div class="directory-item directory-item--live">
+                  <RouterLink :to="wikiPath(wiki.handle, wiki.slug)" class="directory-item-main">
+                    <WikiAvatar
+                      :handle="wiki.handle"
+                      :name="wiki.name"
+                      :seed="wiki.slug"
+                      :accent-color="wiki.accentColor"
+                      :size="40"
+                    />
+                    <span class="directory-item-copy">
+                      <span class="directory-item-name">{{ wiki.name }}</span>
+                      <span class="directory-item-meta">
+                        @{{ wiki.handle }}
+                        · {{ directoryStats[wiki.did]?.notes ?? 0 }} articles
+                        · updated {{ relativeTime(directoryStats[wiki.did]?.lastActivity) }}
+                      </span>
+                      <span v-if="wiki.description" class="directory-item-desc">{{ wiki.description }}</span>
+                    </span>
+                  </RouterLink>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    :disabled="remixing === `${wiki.handle}/${wiki.slug}`"
+                    :title="`Fork @${wiki.handle}/${wiki.slug} into your own editable wiki`"
+                    @click="remix(wiki)"
+                  >
+                    {{ remixing === `${wiki.handle}/${wiki.slug}` ? 'Remixing…' : 'Remix' }}
+                  </button>
+                </div>
+              </li>
+            </ul>
+            <p v-if="!allWikis.length" class="muted">No wikis match “{{ search }}”.</p>
+          </template>
+        </template>
 
-        <ul v-if="tab === 'featured'" class="directory-grid">
+        <ul v-else-if="tab === 'featured'" class="directory-grid">
           <li v-for="wiki in sortedWikis" :key="`${wiki.handle}-${wiki.slug}`">
             <RouterLink :to="wikiPath(wiki.handle, wiki.slug)" class="directory-item">
               <WikiAvatar
@@ -432,5 +567,44 @@ onMounted(() => {
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--pckt-text-muted);
+}
+
+.directory-item--live {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.directory-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.directory-item-desc {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--pckt-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46ch;
+}
+
+.directory-search {
+  width: 100%;
+  margin-bottom: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--pckt-border);
+  border-radius: var(--pckt-radius-sm);
+  background: var(--pckt-bg-elevated);
+  color: var(--pckt-text);
+  font: inherit;
+  box-sizing: border-box;
 }
 </style>

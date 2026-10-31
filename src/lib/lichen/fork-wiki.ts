@@ -139,3 +139,38 @@ export function buildForkRecord(params: {
     baselines: params.baselines,
   }
 }
+
+/**
+ * Remix a wiki from anywhere (browse cards, the "wikis like this" webring):
+ * load the source, fork it under a fresh slug, and register the fork locally
+ * so sync works from the first open. Returns the new wiki record.
+ */
+export async function remixWiki(
+  agent: Agent,
+  sourceHandle: string,
+  sourceSlug: string,
+  options: { name?: string; forkHandle: string } = { forkHandle: '' },
+): Promise<LichenWikiRecord> {
+  const { loadPublicWikiData } = await import('@/lib/lichen/load-public-wiki')
+  const source = await loadPublicWikiData(sourceHandle, sourceSlug, { force: true })
+  if (!source.wiki) throw new Error('That wiki could not be loaded for remixing')
+
+  const { uniqueSlug } = await import('@/lib/atproto/lichen')
+  const slug = uniqueSlug(options.name?.trim() || source.wiki.name, [])
+  const { wiki, baselines } = await forkWiki(agent, source, {
+    slug,
+    name: options.name?.trim() || `${source.wiki.name} remix`,
+    onProgress: () => {},
+  })
+  const { saveFork } = await import('@/lib/lichen/fork')
+  saveFork(
+    buildForkRecord({
+      wiki,
+      forkHandle: options.forkHandle,
+      source,
+      baselines,
+      autoSync: false,
+    }),
+  )
+  return wiki
+}

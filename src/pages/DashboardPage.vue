@@ -19,11 +19,32 @@ const trashError = ref('')
 const activeWikis = computed(() => lichen.activeWikis)
 const trashedWikis = computed(() => lichen.trashedWikis)
 
+// Launch checklist for the first wiki — everything here is computable from
+// the owner's repo without loading each wiki's full contents.
+const checkStats = ref<{ notes: number } | null>(null)
+
+const checklist = computed(() => {
+  const wiki = activeWikis.value[0]
+  return {
+    description: !!wiki?.description,
+    logo: !!wiki?.headerImage,
+    nav: (wiki?.navbarLinks?.length ?? 0) >= 2,
+    pages: (checkStats.value?.notes ?? 0) >= 3,
+  }
+})
+
+const checkNoteCount = computed(() => checkStats.value?.notes ?? 0)
+
 onMounted(async () => {
   if (!auth.agent) return
   try {
     await lichen.loadOwnerWikis(auth.agent)
     await lichen.purgeExpiredTrashedWikis(auth.agent)
+    if (auth.did) {
+      const { loadDirectoryStats } = await import('@/lib/lichen/wiki-directory')
+      const stats = await loadDirectoryStats([auth.did])
+      checkStats.value = stats[auth.did] ?? null
+    }
   } finally {
     initializing.value = false
   }
@@ -72,6 +93,44 @@ async function purgeForever(wiki: LichenWikiRecord) {
       <div v-else-if="lichen.error" class="error-text">{{ lichen.error }}</div>
 
       <template v-else>
+        <div v-if="activeWikis.length" class="checklist card">
+          <h2>Launch checklist</h2>
+          <p class="muted">
+            A wiki feels alive once these are done — finish them for
+            <strong>{{ activeWikis[0]!.name }}</strong> and it's ready to share.
+          </p>
+          <ul class="checklist-items">
+            <li :class="{ done: checklist.description }">
+              <span class="checklist-mark">{{ checklist.description ? '✓' : '○' }}</span>
+              <span>Write a one-line description</span>
+              <RouterLink class="btn btn-ghost btn-sm" :to="`/@${auth.handle}/${activeWikis[0]!.slug}/settings`">
+                Add
+              </RouterLink>
+            </li>
+            <li :class="{ done: checklist.logo }">
+              <span class="checklist-mark">{{ checklist.logo ? '✓' : '○' }}</span>
+              <span>Add a header logo</span>
+              <RouterLink class="btn btn-ghost btn-sm" :to="`/@${auth.handle}/${activeWikis[0]!.slug}/settings`">
+                Add
+              </RouterLink>
+            </li>
+            <li :class="{ done: checklist.nav }">
+              <span class="checklist-mark">{{ checklist.nav ? '✓' : '○' }}</span>
+              <span>Pick your dock buttons (2+ navbar links)</span>
+              <RouterLink class="btn btn-ghost btn-sm" :to="`/@${auth.handle}/${activeWikis[0]!.slug}/settings`">
+                Choose
+              </RouterLink>
+            </li>
+            <li :class="{ done: checklist.pages }">
+              <span class="checklist-mark">{{ checklist.pages ? '✓' : '○' }}</span>
+              <span>Write at least 3 pages <span class="muted">({{ checkNoteCount }} so far)</span></span>
+              <RouterLink class="btn btn-ghost btn-sm" :to="`/@${auth.handle}/${activeWikis[0]!.slug}`">
+                Write
+              </RouterLink>
+            </li>
+          </ul>
+        </div>
+
         <div v-if="activeWikis.length === 0" class="empty card">
           <h2>No wikis yet</h2>
           <p class="muted">Create your first wiki using Lichen lexicons. It will interoperate with lichen.wiki.</p>
@@ -235,5 +294,51 @@ async function purgeForever(wiki: LichenWikiRecord) {
 .trash-item {
   opacity: 0.92;
   border-style: dashed;
+}
+
+.checklist {
+  padding: 1rem 1.25rem;
+  border-color: color-mix(in srgb, var(--pckt-accent, var(--pckt-red)) 30%, var(--pckt-border));
+}
+
+.checklist h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.checklist > p {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.checklist-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.375rem;
+}
+
+.checklist-items li {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.3rem 0;
+  font-size: 0.875rem;
+}
+
+.checklist-items li.done {
+  color: var(--pckt-text-muted);
+  text-decoration: line-through;
+}
+
+.checklist-mark {
+  width: 1.25rem;
+  text-align: center;
+  color: var(--pckt-accent, var(--pckt-red));
+}
+
+.checklist-items .btn {
+  margin-left: auto;
 }
 </style>

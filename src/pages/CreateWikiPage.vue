@@ -13,9 +13,68 @@ const name = ref('')
 const description = ref('')
 const language = ref('en')
 const visibility = ref<'public' | 'private'>('public')
+const starter = ref<'blank' | 'fiction' | 'community' | 'fan'>('blank')
 const saving = ref(false)
 const importError = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
+
+/** Starter packs: a few seeded pages so a new wiki is never an empty room. */
+const STARTERS: Record<
+  Exclude<typeof starter.value, 'blank'>,
+  Array<{ slug: string; title: string; body: string }>
+> = {
+  fiction: [
+    {
+      slug: 'characters',
+      title: 'Characters',
+      body: '# Characters\n\nA cast list for your world.\n\n## Major characters\n\n- [[character-name]] — one line about them\n\n## Minor characters\n\n- \n\n[[Category:Meta]]',
+    },
+    {
+      slug: 'locations',
+      title: 'Locations',
+      body: '# Locations\n\nEvery place worth a page.\n\n- [[place-name]] — one line about it\n\n[[Category:Meta]]',
+    },
+    {
+      slug: 'timeline',
+      title: 'Timeline',
+      body: '# Timeline\n\nWhat happened, in order.\n\n- **Day 1** — the first event\n\n[[Category:Meta]]',
+    },
+  ],
+  community: [
+    {
+      slug: 'about',
+      title: 'About',
+      body: '# About\n\nWhat this community is about, in a paragraph.\n\n[[Category:Meta]]',
+    },
+    {
+      slug: 'rules',
+      title: 'Rules',
+      body: '# Rules\n\n1. Be kind.\n2. Cite sources where you can.\n3. Disagree with ideas, not people.\n\n[[Category:Meta]]',
+    },
+    {
+      slug: 'news',
+      title: 'News',
+      body: '# News\n\nWhat changed lately — new pages, decisions, events.\n\n[[Category:Meta]]',
+    },
+  ],
+  fan: [
+    {
+      slug: 'episodes',
+      title: 'Episodes',
+      body: '# Episodes\n\nOne page per episode or chapter.\n\n- [[episode-1]] — first airing, key moments\n\n[[Category:Meta]]',
+    },
+    {
+      slug: 'cast',
+      title: 'Cast',
+      body: '# Cast\n\nEveryone on screen, minor or major.\n\n- [[character-name]] — played by, first appearance\n\n[[Category:Meta]]',
+    },
+    {
+      slug: 'lore',
+      title: 'Lore',
+      body: '# Lore\n\nThe world behind the story.\n\n- [[lore-entry]] — what fans agree on, what they debate\n\n[[Category:Meta]]',
+    },
+  ],
+}
 
 async function createWiki() {
   if (!name.value.trim()) return
@@ -37,6 +96,21 @@ async function createWiki() {
       description.value.trim(),
       defaultHomeContent(name.value.trim()),
     )
+
+    // Seed the starter pages (best-effort — the wiki exists either way).
+    const starterPages = starter.value === 'blank' ? [] : STARTERS[starter.value]
+    for (const page of starterPages) {
+      await lichen
+        .createNoteWithSlug(
+          auth.agent,
+          page.slug,
+          page.title,
+          page.body,
+          'Starter page',
+        )
+        .catch(() => {})
+    }
+
     router.push(`/@${auth.handle}/${wiki.slug}`)
   } finally {
     saving.value = false
@@ -115,6 +189,19 @@ async function importWiki(event: Event) {
               <option value="fr">Français</option>
               <option value="ja">日本語</option>
             </select>
+          </div>
+
+          <div class="field">
+            <label class="label" for="starter">Start from</label>
+            <select id="starter" v-model="starter" class="select">
+              <option value="blank">Blank — just a home page</option>
+              <option value="fiction">Fiction world — characters, locations, timeline</option>
+              <option value="community">Community — about, rules, news</option>
+              <option value="fan">Fan wiki — episodes, cast, lore</option>
+            </select>
+            <p class="muted field-note">
+              Starter pages are seeded with outlines you can rewrite — they're yours.
+            </p>
           </div>
 
           <div class="field">

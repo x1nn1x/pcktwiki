@@ -1,0 +1,48 @@
+{
+	"lexicon": 1,
+	"id": "wiki.pckt.dockButton",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "A shareable dock button. The creator publishes it in their own repo; other wiki owners can link it (staying synced with the creator's art and label) or fork it (copy the art and point it at their own page). Discovered through the .wikiRef backlink, same as join requests.",
+			"key": "tid",
+			"record": {
+				"type": "object",
+				"required": ["label", "href", "art", "wikiRef", "createdAt"],
+				"properties": {
+					"label": {
+						"type": "string",
+						"maxLength": 64,
+						"description": "Button label shown under the bubble."
+					},
+					"href": {
+						"type": "string",
+						"maxLength": 1024,
+						"description": "Where the button leads on pckt.wiki: a wiki path like /@handle/wiki/slug, or an absolute URL."
+					},
+					"target": {
+						"type": "string",
+						"format": "at-uri",
+						"description": "Optional at-uri of the wiki.lichen.note the button was built from, so forks can trace provenance."
+					},
+					"art": {
+						"type": "blob",
+						"accept": ["image/webp", "image/png"],
+						"maxSize": 1000000,
+						"description": "The bubble art, roughly square. Held in the creator's repo."
+					},
+					"wikiRef": {
+						"type": "string",
+						"format": "at-uri",
+						"description": "AT-URI of the creator's wiki, so Constellation can index buttons per wiki."
+					},
+					"createdAt": {
+						"type": "string",
+						"format": "datetime",
+						"description": "When the button was created."
+					}
+				}
+			}
+		}
+	}
+}

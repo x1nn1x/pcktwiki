@@ -230,7 +230,7 @@ export default defineConfig({
       devOptions: {
         enabled: false,
       },
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: [
         'favicon.ico',
         'favicon-16x16.png',

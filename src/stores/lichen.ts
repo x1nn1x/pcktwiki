@@ -11,6 +11,7 @@ import {
   listMemberships,
   listNotes,
   listRevisions,
+  listRecentRevisions,
   listWikis,
   parseAtUri,
   putWikiAtSlug,
@@ -202,6 +203,13 @@ export const useLichenStore = defineStore('lichen', () => {
   const forkProgress = ref<ForkProgress | null>(null)
   const cachedFrom = ref<number | null>(null)
   let loadSeq = 0
+  /**
+   * Whether `revisions` currently holds the wiki's ENTIRE history. Page views
+   * load newest-first with snapshot anchoring; history/merge/rewind pages call
+   * ensureFullHistory() before reading deep history.
+   */
+  const fullHistoryLoaded = ref(false)
+  const fullHistoryLoading = ref(false)
 
   const activeWikis = computed(() =>
     wikis.value.filter((wiki) => !isWikiTrashed(wiki) && !wiki.redirectSlug),
@@ -492,39 +500,22 @@ export const useLichenStore = defineStore('lichen', () => {
     }
     currentViewerDid.value = viewerDid
 
-    try {
+    /**
+     * The full fetch-and-apply pass. Also runs in the background after a
+     * cache paint (stale-while-revalidate), so a repeat visit paints instantly
+     * and then quietly catches up with the PDS.
+     */
+    const fetchAndApply = async (): Promise<void> => {
       const profileAgent = getPublicAgent()
       const cached =
         handle && wikiSlug ? getPublicWikiCache(handle, wikiSlug) : null
-      let cacheHit =
+      const cacheHit =
         cached && cached.did === ownerDid && cached.wiki?.slug === wikiSlug ? cached : null
-
-      if (!cacheHit && !isOnline() && handle) {
-        const offline = await tryOfflineCache(handle, wikiSlug, ownerDid)
-        if (offline) cacheHit = offline
-      }
-
-      if (cacheHit && !isOnline()) {
-        applyCacheHit(cacheHit, handle)
-        if (cacheHit.wiki) {
-          await resolveAccess(agent, cacheHit.wiki, viewerDid)
-          if (seq !== loadSeq) return
-          if (cacheHit.wiki.visibility === 'private' && access.value === 'none') {
-            error.value = 'This wiki is private'
-            notes.value = []
-            return
-          }
-          activeWikiScope.value = scope
-          forkChanges.value = []
-          refreshForkInfo()
-          return
-        }
-      }
 
       const [
         wiki,
         noteRecords,
-        revisionRecords,
+        revisionResult,
         membershipRecords,
         policyRecords,
         grantRecords,
@@ -545,9 +536,11 @@ export const useLichenStore = defineStore('lichen', () => {
         cacheHit && !isOnline()
           ? Promise.resolve(cacheHit.noteRecords)
           : listNotes(agent, ownerDid),
+        // Newest-first with snapshot anchoring: pages needing full history
+        // (page history, merges, rewind) call ensureFullHistory() instead.
         cacheHit && !isOnline()
-          ? Promise.resolve(cacheHit.revisionRecords)
-          : listRevisions(agent, ownerDid),
+          ? Promise.resolve({ records: cacheHit.revisionRecords, complete: true })
+          : listRecentRevisions(agent, ownerDid),
         listMemberships(agent, ownerDid).catch(() => [] as LichenMembershipRecord[]),
         listPolicies(agent, ownerDid).catch(() => []),
         listPageGrants(agent, ownerDid).catch(() => []),
@@ -595,10 +588,13 @@ export const useLichenStore = defineStore('lichen', () => {
         cachedFrom.value = cacheHit.fetchedAt
       } else {
         const filteredNotes = noteRecords.filter((note: LichenNoteRecord) => note.wikiRef === wiki.uri)
-        revisions.value = revisionRecords.filter((revision: LichenRevisionRecord) => {
+        revisions.value = revisionResult.records.filter((revision: LichenRevisionRecord) => {
           const note = noteRecords.find((item: LichenNoteRecord) => item.uri === revision.noteRef)
           return note?.wikiRef === wiki.uri
         })
+        // The window covered the whole chain → this load has full history and
+        // ensureFullHistory() is a no-op until the next wiki change.
+        fullHistoryLoaded.value = revisionResult.complete
 
         const contents = buildNoteContents(revisions.value)
         notes.value = attachContentToNotes(filteredNotes, contents)
@@ -653,6 +649,59 @@ export const useLichenStore = defineStore('lichen', () => {
       refreshForkInfo()
       void rehydrateForkInfo()
       startFirehose(ownerDid)
+    }
+
+    try {
+      const cached =
+        handle && wikiSlug ? getPublicWikiCache(handle, wikiSlug) : null
+      const cacheHit =
+        cached && cached.did === ownerDid && cached.wiki?.slug === wikiSlug ? cached : null
+
+      if (!cacheHit && !isOnline() && handle) {
+        const offline = await tryOfflineCache(handle, wikiSlug, ownerDid)
+        if (offline) {
+          applyCacheHit(offline, handle)
+          if (offline.wiki) {
+            await resolveAccess(agent, offline.wiki, viewerDid)
+            if (seq !== loadSeq) return
+            if (offline.wiki.visibility === 'private' && access.value === 'none') {
+              error.value = 'This wiki is private'
+              notes.value = []
+              return
+            }
+            activeWikiScope.value = scope
+            forkChanges.value = []
+            refreshForkInfo()
+            return
+          }
+        }
+      }
+
+      // Stale-while-revalidate: a cached wiki paints instantly (online or not),
+      // then the live fetch runs in the background and quietly updates.
+      if (cacheHit && cacheHit.wiki) {
+        applyCacheHit(cacheHit, handle)
+        await resolveAccess(agent, cacheHit.wiki, viewerDid)
+        if (seq !== loadSeq) return
+        if (cacheHit.wiki.visibility === 'private' && access.value === 'none') {
+          error.value = 'This wiki is private'
+          notes.value = []
+          return
+        }
+        activeWikiScope.value = scope
+        forkChanges.value = []
+        refreshForkInfo()
+        loading.value = false
+        if (isOnline()) {
+          void fetchAndApply().catch(() => {
+            // The cached view stays on screen; a network failure is not worth
+            // blanking it for.
+          })
+        }
+        return
+      }
+
+      await fetchAndApply()
     } catch (err) {
       if (seq !== loadSeq) return
       if (handle) {
@@ -879,8 +928,20 @@ export const useLichenStore = defineStore('lichen', () => {
     oldContent: string = note.content,
     forceSnapshot = false,
     blobs?: Array<Record<string, unknown>>,
+    /**
+     * Blank-page guard override. Writing empty text over real content is how
+     * pages end up "Nothing written yet" with all history apparently gone —
+     * the empty snapshots re-anchor replay to nothing. Merges and rewinds may
+     * pass true when an empty state is the point.
+     */
+    allowBlank = false,
   ): Promise<void> {
     assertCanEdit()
+    if (!allowBlank && !content.trim() && oldContent.trim()) {
+      throw new Error(
+        'This edit would blank the page. If you meant to delete it, use the page menu; old text can always be restored from history.',
+      )
+    }
     saving.value = true
     error.value = null
     try {
@@ -1052,6 +1113,13 @@ export const useLichenStore = defineStore('lichen', () => {
         parentNote.title,
         state.content,
         mergeRevisionMessage(state.revision, branchNote.slug),
+        undefined,
+        undefined,
+        false,
+        undefined,
+        // A branch state can legitimately be empty (content was removed on
+        // the branch); the blank-page guard is for accidental wipes.
+        true,
       )
       imported += 1
     }
@@ -1066,6 +1134,11 @@ export const useLichenStore = defineStore('lichen', () => {
         parentNote.title,
         branchNote.content,
         `Merged from branch ${branchNote.slug}`,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        true,
       )
       imported += 1
     }
@@ -2128,6 +2201,12 @@ export const useLichenStore = defineStore('lichen', () => {
         state.note.title,
         state.contentAtTime,
         `Rewound to ${label}`,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        // Rewinding to a moment when the page was empty is intentional.
+        true,
       )
     }
     for (const state of plan.remove) {
@@ -2244,6 +2323,34 @@ export const useLichenStore = defineStore('lichen', () => {
     return getBacklinksForNote(backlinks.value, slug)
   }
 
+  /**
+   * Load any revisions the newest-first page-view fetch skipped. Pages that
+   * read deep history (page history, wiki versions, rewind, merges,
+   * suggestions) call this first; it's a no-op when the last load already
+   * covered the whole chain.
+   */
+  async function ensureFullHistory(agent: Agent | null): Promise<void> {
+    const wiki = currentWiki.value
+    if (!wiki || fullHistoryLoaded.value || fullHistoryLoading.value) return
+    const readAgent = agent ?? getPublicAgent()
+    fullHistoryLoading.value = true
+    try {
+      const all = await listRevisions(readAgent, wiki.ownerDid)
+      fullHistoryLoaded.value = true
+      revisions.value = all.filter((revision) => {
+        const note = notes.value.find((item) => item.uri === revision.noteRef)
+        return note?.wikiRef === wiki.uri
+      })
+      const contents = buildNoteContents(revisions.value)
+      notes.value = attachContentToNotes(
+        notes.value.map(({ content: _content, latestRevisionUri: _lru, ...record }) => record),
+        contents,
+      )
+    } finally {
+      fullHistoryLoading.value = false
+    }
+  }
+
   function getHistory(noteRef: string): LichenRevisionRecord[] {
     return listRevisionHistory(noteRef, revisions.value)
   }
@@ -2258,6 +2365,8 @@ export const useLichenStore = defineStore('lichen', () => {
     currentWiki.value = null
     notes.value = []
     revisions.value = []
+    fullHistoryLoaded.value = false
+    fullHistoryLoading.value = false
     memberships.value = []
     policyRecord.value = null
     pageGrants.value = []
@@ -2367,6 +2476,7 @@ export const useLichenStore = defineStore('lichen', () => {
     queueOrSaveNoteEdit,
     getBacklinksFor,
     getHistory,
+    ensureFullHistory,
     getContentAtRevision,
     forkCurrentWiki,
     checkForkUpdates,

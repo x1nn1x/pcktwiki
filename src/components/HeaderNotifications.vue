@@ -9,12 +9,14 @@ import { notificationContext, notificationHeadline } from '@/lib/notifications'
 import { useWatchNotifications } from '@/composables/useWatchNotifications'
 import { useWatchlist } from '@/composables/useWatchlist'
 import { useMemberRequestNotifications } from '@/composables/useMemberRequestNotifications'
+import { useForumNotifications } from '@/composables/useForumNotifications'
+import { listIncomingSuggestions } from '@/lib/lichen/suggestions-remote'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
 import type { DiscussionWatchEntry } from '@/lib/watchlist'
 import type { WatchNotification } from '@/lib/notifications'
 
-type TabId = 'updates' | 'watching' | 'requests'
+type TabId = 'updates' | 'watching' | 'requests' | 'forum'
 
 const open = ref(false)
 const tab = ref<TabId>('updates')
@@ -60,8 +62,37 @@ const {
   loadForWikis,
 } = useMemberRequestNotifications()
 
+const {
+  rows: forumRows,
+  unreadCount: forumUnreadCount,
+  load: loadForumNotifications,
+  markAllRead: markAllForumRead,
+} = useForumNotifications()
+
+const suggestionRows = ref<Array<{ wikiName: string; wikiSlug: string; count: number }>>([])
+const suggestionCount = ref(0)
+
+async function loadSuggestionReviews() {
+  if (!auth.agent) return
+  const rowsOut: Array<{ wikiName: string; wikiSlug: string; count: number }> = []
+  let total = 0
+  for (const wiki of ownedWikis.value) {
+    try {
+      const pending = await listIncomingSuggestions(auth.agent, wiki.uri)
+      if (pending.length) {
+        rowsOut.push({ wikiName: wiki.name, wikiSlug: wiki.slug, count: pending.length })
+        total += pending.length
+      }
+    } catch {
+      // skip unreachable wikis
+    }
+  }
+  suggestionRows.value = rowsOut
+  suggestionCount.value = total
+}
+
 const totalUnreadCount = computed(
-  () => updatesUnreadCount.value + watchingUnreadCount.value + requestCount.value,
+  () => updatesUnreadCount.value + watchingUnreadCount.value + requestCount.value + forumUnreadCount.value + suggestionCount.value,
 )
 
 const ownedWikis = computed(() =>
@@ -137,6 +168,8 @@ watch(open, async (isOpen) => {
     if (ownedWikis.value.length) {
       void loadForWikis(auth.agent, ownedWikis.value)
     }
+    void loadForumNotifications(auth.agent)
+    void loadSuggestionReviews()
   }
 })
 
@@ -149,6 +182,9 @@ watch(tab, async (next) => {
       await lichen.loadOwnerWikis(auth.agent).catch(() => {})
     }
     void loadForWikis(auth.agent, ownedWikis.value)
+    void loadSuggestionReviews()
+  } else if (next === 'forum' && auth.agent) {
+    void loadForumNotifications(auth.agent)
   }
 })
 </script>
@@ -213,8 +249,24 @@ watch(tab, async (next) => {
             :aria-selected="tab === 'requests'"
             @click.stop="setTab('requests')"
           >
-            Joins
-            <span v-if="requestCount" class="notif-tab-count">{{ requestCount }}</span>
+            Reviews
+            <span v-if="requestCount + suggestionCount" class="notif-tab-count">{{
+              requestCount + suggestionCount
+            }}</span>
+          </button>
+          <button
+            v-if="auth.isAuthenticated"
+            type="button"
+            class="notif-tab"
+            role="tab"
+            :class="{ active: tab === 'forum' }"
+            :aria-selected="tab === 'forum'"
+            @click.stop="setTab('forum')"
+          >
+            Forum
+            <span v-if="forumUnreadCount" class="notif-tab-count notif-tab-count-watching">{{
+              forumUnreadCount
+            }}</span>
           </button>
         </div>
         <button
@@ -450,11 +502,13 @@ watch(tab, async (next) => {
       </div>
 
       <div v-else-if="tab === 'requests'" role="tabpanel">
-        <div v-if="!pendingRequestRows.length" class="notif-empty">
-          <p class="notif-empty-text muted">No pending join requests for your wikis.</p>
+        <div v-if="!pendingRequestRows.length && !suggestionRows.length" class="notif-empty">
+          <p class="notif-empty-text muted">
+            No join requests or suggested edits waiting for your review.
+          </p>
         </div>
-        <ul v-else class="notif-list">
-          <li v-for="row in pendingRequestRows" :key="row.wikiSlug" class="notif-item">
+        <ul v-if="pendingRequestRows.length" class="notif-list">
+          <li v-for="row in pendingRequestRows" :key="`join-${row.wikiSlug}`" class="notif-item">
             <RouterLink
               v-if="auth.handle"
               :to="`/@${auth.handle}/${row.wikiSlug}/settings`"
@@ -470,6 +524,61 @@ watch(tab, async (next) => {
             </RouterLink>
           </li>
         </ul>
+        <ul v-if="suggestionRows.length" class="notif-list">
+          <li v-for="row in suggestionRows" :key="`sugg-${row.wikiSlug}`" class="notif-item">
+            <RouterLink
+              v-if="auth.handle"
+              :to="`/@${auth.handle}/${row.wikiSlug}/suggestions`"
+              class="notif-link"
+              role="menuitem"
+              @click="close"
+            >
+              <span class="notif-dot notif-dot-unread" aria-hidden="true" />
+              <span class="notif-copy">
+                <span class="notif-headline">{{ row.count }} suggested edit{{ row.count === 1 ? '' : 's' }}</span>
+                <span class="notif-meta muted">{{ row.wikiName }}</span>
+              </span>
+            </RouterLink>
+          </li>
+        </ul>
+      </div>
+
+      <div v-else-if="tab === 'forum'" role="tabpanel">
+        <div v-if="loading" class="notif-empty">
+          <p class="notif-empty-text muted">Checking your threads…</p>
+        </div>
+        <div v-else-if="!forumRows.length" class="notif-empty">
+          <p class="notif-empty-text muted">
+            You haven't started any forum discussions yet — they live on Bluesky, and replies
+            show up here.
+          </p>
+        </div>
+        <ul v-else class="notif-list">
+          <li v-for="row in forumRows" :key="row.rootPost" class="notif-item">
+            <a :href="row.bskyUrl" target="_blank" rel="noopener noreferrer" class="notif-link" role="menuitem">
+              <span
+                class="notif-dot"
+                :class="{ 'notif-dot-unread': row.replies > row.seen }"
+                aria-hidden="true"
+              />
+              <span class="notif-copy">
+                <span class="notif-headline">
+                  {{ row.replies }} repl{{ row.replies === 1 ? 'y' : 'ies' }}
+                  <template v-if="row.replies > row.seen">
+                    ({{ row.replies - row.seen }} new)
+                  </template>
+                </span>
+                <span class="notif-detail">{{ row.excerpt }}…</span>
+                <span class="notif-meta muted">on Bluesky · @{{ row.author }}</span>
+              </span>
+            </a>
+          </li>
+        </ul>
+        <footer v-if="forumRows.length" class="notif-footer">
+          <button type="button" class="notif-footer-link" @click.stop="markAllForumRead">
+            Mark all read
+          </button>
+        </footer>
       </div>
     </div>
   </div>

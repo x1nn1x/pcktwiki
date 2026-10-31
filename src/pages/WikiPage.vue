@@ -33,8 +33,15 @@ import ForksOfWikiPanel from '@/components/ForksOfWikiPanel.vue'
 import JoinRequestBanner from '@/components/JoinRequestBanner.vue'
 import PhotoSubmitCard from '@/components/PhotoSubmitCard.vue'
 import WikiDock from '@/components/WikiDock.vue'
+import WikisLikeThis from '@/components/WikisLikeThis.vue'
 import RateLimitSignInHint from '@/components/RateLimitSignInHint.vue'
-import { getPublicWikiCache } from '@/lib/lichen/wiki-cache'
+import { resolveBlobDisplayUrl } from '@/lib/atproto/blobs'
+import { getPublicAgent } from '@/lib/atproto/auth'
+import {
+  getDockButton,
+  listDockItems,
+  resolveDockButtonArt,
+} from '@/lib/pckt-records'
 import type { DockLink } from '@/lib/wiki-dock'
 import WikiEditable from '@/components/WikiEditable.vue'
 import WikiInlineNoteEditor from '@/components/WikiInlineNoteEditor.vue'
@@ -201,14 +208,63 @@ const canManageWiki = computed(() => canManage(lichen.access))
 /**
  * The OS-style bottom dock mirrors the wiki's own editable navbar links — the
  * same list the site topbar renders, from the live wiki record or the public
- * cache while metadata is still loading.
+ * cache while metadata is still loading — plus shared buttons other creators
+ * have linked to this wiki. Bubble art resolves from blob refs where present.
  */
-const dockLinks = computed((): DockLink[] => {
-  const live = lichen.currentWiki
-  if (live?.navbarLinks?.length) return live.navbarLinks
-  const cached = getPublicWikiCache(handle.value, wikiSlug.value, Number.POSITIVE_INFINITY)
-  return cached?.wiki?.navbarLinks ?? []
-})
+const dockLinks = ref<DockLink[]>([])
+let dockLoadSeq = 0
+
+watch(
+  () => [lichen.currentWiki?.uri, lichen.currentWiki?.ownerDid, lichen.currentWiki?.navbarLinks, ownerDid.value] as const,
+  async ([wikiUri, wikiOwnerDid, navbarLinks]) => {
+    const seq = ++dockLoadSeq
+    if (!wikiUri || !wikiOwnerDid) {
+      dockLinks.value = []
+      return
+    }
+
+    const links: DockLink[] = (navbarLinks ?? []).map((link) => ({
+      label: link.label,
+      url: link.url ?? '',
+    }))
+    // Static rows render instantly; shared buttons fill in async.
+    dockLinks.value = links
+
+    void (async () => {
+      try {
+        const items = await listDockItems(wikiOwnerDid)
+        const agent = auth.agent ?? getPublicAgent()
+        const extra: DockLink[] = []
+        for (const item of items) {
+          if (item.wikiRef !== wikiUri) continue
+          if (item.buttonRef) {
+            // Linked shape — label and art stay live from the creator's repo.
+            const button = await getDockButton(agent, item.buttonRef)
+            if (!button) continue
+            const resolved = await resolveDockButtonArt(button)
+            extra.push({
+              label: resolved.label,
+              url: resolved.href,
+              artUrl: resolved.artUrl ?? undefined,
+            })
+          } else if (item.label && item.href) {
+            // Forked shape — a self-contained copy this wiki owns.
+            const artUrl = item.art
+              ? await resolveBlobDisplayUrl(wikiOwnerDid, item.art).catch(() => null)
+              : null
+            extra.push({ label: item.label, url: item.href, artUrl: artUrl ?? undefined })
+          }
+        }
+        if (seq === dockLoadSeq && extra.length) {
+          dockLinks.value = [...dockLinks.value, ...extra]
+        }
+      } catch {
+        // shared buttons are additive; failures leave the dock as-is
+      }
+    })()
+  },
+  { immediate: true },
+)
 const showRateLimitSignInHint = computed(
   () => !auth.isAuthenticated && isRateLimitUserMessage(lichen.error),
 )
@@ -254,6 +310,30 @@ async function createAllStubs() {
     await lichen.createAllBlogStubs(auth.agent)
   } finally {
     creatingStubs.value = false
+  }
+}
+
+// Remix — fork this wiki into the viewer's account (surfaced on the home page
+// for non-owners; the browse directory cards use the same helper).
+const remixing = ref(false)
+const remixError = ref('')
+async function remixThisWiki() {
+  if (!auth.agent) {
+    router.push({ name: 'home', query: { redirect: route.fullPath } })
+    return
+  }
+  remixing.value = true
+  remixError.value = ''
+  try {
+    const { remixWiki } = await import('@/lib/lichen/fork-wiki')
+    const wiki = await remixWiki(auth.agent, handle.value, wikiSlug.value, {
+      forkHandle: auth.handle ?? '',
+    })
+    await router.push(`/@${auth.handle}/${wiki.slug}`)
+  } catch (err) {
+    remixError.value = err instanceof Error ? err.message : 'Could not remix this wiki'
+  } finally {
+    remixing.value = false
   }
 }
 
@@ -401,23 +481,34 @@ onUnmounted(() => {
           <template v-else-if="!openTarget">
             <p class="muted not-found-copy">
               This page doesn’t exist yet.
-              <template v-if="canEditWiki"> You can create it.</template>
+              <template v-if="canPublishWiki"> You can create it.</template>
             </p>
-            <button
-              v-if="canPublishWiki"
-              type="button"
-              class="btn btn-primary"
-              @click="startCreatePage"
-            >
-              Create this page
-            </button>
-            <RouterLink
-              v-else-if="noteCaps.canSuggest"
-              :to="`/@${handle}/${wikiSlug}/edit/${requestedSlug}`"
-              class="btn btn-primary"
-            >
-              Propose this page
-            </RouterLink>
+            <div class="not-found-actions">
+              <button
+                v-if="canPublishWiki"
+                type="button"
+                class="btn btn-primary"
+                @click="startCreatePage"
+              >
+                Create this page
+              </button>
+              <RouterLink
+                v-else-if="noteCaps.canSuggest"
+                :to="`/@${handle}/${wikiSlug}/edit/${requestedSlug}`"
+                class="btn btn-primary"
+              >
+                Propose this page
+              </RouterLink>
+              <RouterLink
+                :to="`/@${handle}/${wikiSlug}/forum?note=${encodeURIComponent(requestedSlug)}`"
+                class="btn btn-secondary"
+              >
+                Discuss it instead
+              </RouterLink>
+            </div>
+            <p v-if="!canEditWiki && !noteCaps.canSuggest" class="muted not-found-copy">
+              Or start a discussion about what this page should be.
+            </p>
           </template>
         </div>
         <template v-else-if="lichen.currentWiki && currentNote">
@@ -493,6 +584,33 @@ onUnmounted(() => {
             v-if="isWikiHome"
             :wiki-uri="lichen.currentWiki.uri"
           />
+
+          <WikisLikeThis
+            v-if="isWikiHome && lichen.currentWiki"
+            :wiki-uri="lichen.currentWiki.uri"
+            :handle="handle"
+            :slug="wikiSlug"
+          />
+
+          <section
+            v-if="isWikiHome && !canPublishWiki && lichen.currentWiki"
+            class="card remix-card"
+          >
+            <h2>Remix this wiki</h2>
+            <p class="muted">
+              Fork it into your own account — every page, image, and the theme come with you,
+              and you can pull in the original's later changes whenever you want.
+            </p>
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="remixing"
+              @click="remixThisWiki"
+            >
+              {{ remixing ? 'Remixing…' : auth.isAuthenticated ? 'Remix this wiki' : 'Sign in to remix' }}
+            </button>
+            <p v-if="remixError" class="error-text">{{ remixError }}</p>
+          </section>
 
           <NoteContent
             :key="currentNote.uri"
@@ -684,6 +802,30 @@ onUnmounted(() => {
   padding: 0.75rem 1rem;
   border: 1px dashed var(--pckt-border);
   border-radius: var(--pckt-radius-btn);
+  font-size: 0.875rem;
+}
+
+.not-found-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.remix-card {
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.remix-card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.remix-card p {
+  margin: 0;
   font-size: 0.875rem;
 }
 </style>

@@ -233,6 +233,75 @@ export async function listRevisions(agent: Agent, did: string): Promise<LichenRe
   }))
 }
 
+/**
+ * Newest-first revision loading for page views.
+ *
+ * Snapshots re-anchor replay every few revisions, so a page only needs the
+ * newest records: this walks newest→older and stops as soon as every note
+ * seen so far has a snapshot (or its chain root) inside the window. Big wikis
+ * load tens of records instead of their entire history; `complete` reports
+ * whether the window happens to cover everything, so callers that need full
+ * history (page history, merges, rewind) can fetch the rest on demand.
+ */
+export async function listRecentRevisions(
+  agent: Agent,
+  did: string,
+  options: { max?: number } = {},
+): Promise<{ records: LichenRevisionRecord[]; complete: boolean }> {
+  const max = options.max ?? 400
+  const records: LichenRevisionRecord[] = []
+  const snapshotSeen = new Set<string>()
+  let cursor: string | undefined
+  let exhausted = false
+
+  while (records.length < max) {
+    const response = await agent.com.atproto.repo.listRecords({
+      repo: did,
+      collection: COLLECTIONS.noteRevision,
+      limit: 100,
+      reverse: true,
+      cursor,
+    })
+    for (const record of response.data.records) {
+      const value = record.value as RecordValue
+      const noteRef = String(value.noteRef ?? '')
+      const mapped: LichenRevisionRecord = {
+        uri: record.uri,
+        cid: record.cid ?? '',
+        noteRef,
+        parentRevision: value.parentRevision as string | undefined,
+        diff: String(value.diff ?? ''),
+        diffFormat: String(value.diffFormat ?? 'diff-match-patch'),
+        message: value.message as string | undefined,
+        snapshot: typeof value.snapshot === 'string' ? value.snapshot : undefined,
+        createdAt: String(value.createdAt ?? new Date().toISOString()),
+      }
+      records.push(mapped)
+      if (mapped.snapshot !== undefined || !mapped.parentRevision) snapshotSeen.add(noteRef)
+    }
+    cursor = response.data.cursor
+    if (!cursor) {
+      exhausted = true
+      break
+    }
+    // Every note touched in the window is anchored → older records cannot
+    // change how any page renders, so stop here.
+    if (records.length > 0 && snapshotSeen.size > 0) {
+      const pending = new Set(records.map((r) => r.noteRef))
+      let anchored = true
+      for (const noteRef of pending) {
+        if (!snapshotSeen.has(noteRef)) {
+          anchored = false
+          break
+        }
+      }
+      if (anchored) break
+    }
+  }
+
+  return { records, complete: exhausted || records.length < max }
+}
+
 export async function listMemberships(agent: Agent, did: string): Promise<LichenMembershipRecord[]> {
   return listRecords(agent, did, COLLECTIONS.membership, (uri, cid, _rkey, value) => ({
     uri,

@@ -36,6 +36,8 @@ const GraphPage = () => import('@/pages/GraphPage.vue')
 const MapPage = () => import('@/pages/MapPage.vue')
 const RenamePage = () => import('@/pages/RenamePage.vue')
 const SuggestionsPage = () => import('@/pages/SuggestionsPage.vue')
+const ForumPage = () => import('@/pages/ForumPage.vue')
+const DockButtonPage = () => import('@/pages/DockButtonPage.vue')
 import { getCachedHandle } from '@/lib/atproto/handle-cache'
 import { parseAtUriParam } from '@/lib/atproto/permalinks'
 
@@ -161,6 +163,16 @@ const router = createRouter({
       name: 'wiki-rename',
       component: RenamePage,
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/@:handle/:wikiSlug/forum',
+      name: 'wiki-forum',
+      component: ForumPage,
+    },
+    {
+      path: '/dock-button',
+      name: 'dock-button',
+      component: DockButtonPage,
     },
     {
       path: '/@:handle/:wikiSlug/suggestions',

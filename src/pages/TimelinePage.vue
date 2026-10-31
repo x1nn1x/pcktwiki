@@ -22,6 +22,8 @@ async function load() {
     viewerDid: auth.did,
     authAgent: auth.agent,
   })
+  // This page reads deep history, which page views load newest-first.
+  await lichen.ensureFullHistory(auth.agent)
 }
 
 onMounted(load)

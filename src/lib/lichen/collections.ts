@@ -24,6 +24,9 @@ export const COLLECTIONS = {
   pageGrant: 'wiki.pckt.pageGrant',
   suggestion: 'wiki.pckt.suggestion',
   approvedMedia: 'wiki.pckt.approvedMedia',
+  dockButton: 'wiki.pckt.dockButton',
+  dockItem: 'wiki.pckt.dockItem',
+  forumTopic: 'wiki.pckt.forumTopic',
 } as const
 
 // `include:wiki.pckt.permissions` needs a resolvable lexicon at

@@ -1,0 +1,37 @@
+{
+	"lexicon": 1,
+	"id": "wiki.pckt.forumTopic",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "A forum topic for one wiki, anchored to a Bluesky post. The topic's content lives as an app.bsky.feed.post thread on Bluesky (long posts are split into reply chains at paragraph boundaries); this record is the anchor that ties the thread to the wiki and is discovered through the .wikiRef backlink.",
+			"key": "tid",
+			"record": {
+				"type": "object",
+				"required": ["wikiRef", "rootPost", "createdAt"],
+				"properties": {
+					"wikiRef": {
+						"type": "string",
+						"format": "at-uri",
+						"description": "AT-URI of the wiki this topic belongs to."
+					},
+					"rootPost": {
+						"type": "string",
+						"format": "at-uri",
+						"description": "AT-URI of the first app.bsky.feed.post in the thread."
+					},
+					"noteSlug": {
+						"type": "string",
+						"maxLength": 256,
+						"description": "Optional article the discussion is about; the article's Discuss button links here."
+					},
+					"createdAt": {
+						"type": "string",
+						"format": "datetime",
+						"description": "When the topic was started."
+					}
+				}
+			}
+		}
+	}
+}

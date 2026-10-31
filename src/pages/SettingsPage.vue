@@ -12,6 +12,7 @@ import WikiHeaderImageEditor from '@/components/WikiHeaderImageEditor.vue'
 import WikiMediaLibrary from '@/components/WikiMediaLibrary.vue'
 import HandleTypeahead from '@/components/HandleTypeahead.vue'
 import CollaborationSettings from '@/components/settings/CollaborationSettings.vue'
+import DockButtonsSettings from '@/components/settings/DockButtonsSettings.vue'
 import { downloadWikiExport } from '@/lib/export/wiki-bundle'
 import WikiImportButton from '@/components/WikiImportButton.vue'
 import { applyWikiTheme, loadLocalTheme, saveLocalTheme, themeFromWiki } from '@/lib/theme'
@@ -206,6 +207,57 @@ async function copyInvite() {
   await navigator.clipboard.writeText(inviteUrl.value)
   inviteCopied.value = true
   setTimeout(() => { inviteCopied.value = false }, 2000)
+}
+
+// --- Custom domain wizard --------------------------------------------------
+
+const domainInput = ref('')
+const dnsChecking = ref(false)
+const dnsResults = ref<Array<{ label: string; ok: boolean; detail: string }> | null>(null)
+const GITHUB_PAGES_IPS = ['185.199.108.153', '185.199.109.153', '185.199.110.153', '185.199.111.153']
+
+async function dohQuery(name: string, type: string): Promise<{ Answer?: Array<{ type: number; data: string }> }> {
+  const response = await fetch(
+    `https://mozilla.cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`,
+    { headers: { accept: 'application/dns-json' } },
+  )
+  if (!response.ok) throw new Error(`DNS lookup failed (${response.status})`)
+  return response.json()
+}
+
+async function checkDomainDns() {
+  const domain = domainInput.value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  if (!domain) return
+  dnsChecking.value = true
+  dnsResults.value = null
+  try {
+    const [apex, www] = await Promise.all([
+      dohQuery(domain, 'A'),
+      dohQuery(`www.${domain}`, 'CNAME').catch(() => ({}) as { Answer?: Array<{ type: number; data: string }> }),
+    ])
+    const aIps = (apex.Answer ?? []).filter((a) => a.type === 1).map((a) => a.data)
+    const aOk = GITHUB_PAGES_IPS.some((ip) => aIps.includes(ip))
+    const cnames = (www.Answer ?? []).filter((a) => a.type === 5).map((a) => a.data)
+    const cnameOk = cnames.some((d) => /\.github\.io\.?$/i.test(d))
+    dnsResults.value = [
+      {
+        label: `${domain} points at GitHub Pages`,
+        ok: aOk,
+        detail: aIps.length ? aIps.join(', ') : 'no A records found',
+      },
+      {
+        label: `www.${domain} points at your github.io page`,
+        ok: cnameOk,
+        detail: cnames.length ? cnames.join(', ') : 'no CNAME record found',
+      },
+    ]
+  } catch (err) {
+    dnsResults.value = [
+      { label: 'DNS lookup', ok: false, detail: err instanceof Error ? err.message : 'failed' },
+    ]
+  } finally {
+    dnsChecking.value = false
+  }
 }
 
 async function exportWiki() {
@@ -419,9 +471,51 @@ async function purgeWikiNow() {
 
       <CollaborationSettings v-if="canManageWiki && lichen.currentWiki" />
 
+      <DockButtonsSettings v-if="canManageWiki && lichen.currentWiki" />
+
       <WikiHeaderImageEditor v-if="canManageWiki && lichen.currentWiki" />
 
       <ThemeEditor v-model="theme" />
+
+      <section v-if="canManageWiki" class="card section">
+        <h2>Custom domain</h2>
+        <p class="muted">
+          Serve this wiki from a domain you own. Point the DNS at GitHub Pages (where this app
+          is deployed), add the domain in your repository's Pages settings, and everything —
+          OAuth sign-in included — moves to the new address.
+        </p>
+        <ol class="domain-steps">
+          <li>
+            At your registrar, add four <code>A</code> records on <code>@</code>:
+            <code>185.199.108.153</code>, <code>185.199.109.153</code>,
+            <code>185.199.110.153</code>, <code>185.199.111.153</code> — and a <code>CNAME</code>
+            on <code>www</code> to <code>&lt;your-github-username&gt;.github.io</code>.
+          </li>
+          <li>In your GitHub repository: Settings → Pages → Custom domain → enter the domain.</li>
+          <li>Check the records here, then deploy — the site rebuilds for the new address.</li>
+        </ol>
+        <div class="domain-check">
+          <input
+            v-model="domainInput"
+            class="input"
+            type="text"
+            placeholder="your-domain.wiki"
+            spellcheck="false"
+            autocomplete="off"
+            @keydown.enter="checkDomainDns"
+          />
+          <button type="button" class="btn btn-secondary" :disabled="dnsChecking || !domainInput.trim()" @click="checkDomainDns">
+            {{ dnsChecking ? 'Checking…' : 'Check DNS' }}
+          </button>
+        </div>
+        <ul v-if="dnsResults" class="domain-results">
+          <li v-for="result in dnsResults" :key="result.label">
+            <span :class="result.ok ? 'domain-ok' : 'domain-bad'">{{ result.ok ? '✓' : '✗' }}</span>
+            {{ result.label }}
+            <span class="muted">— {{ result.detail }}</span>
+          </li>
+        </ul>
+      </section>
 
       <section v-if="canManageWiki" class="card section">
         <h2>Backup</h2>
@@ -789,5 +883,43 @@ header h1 {
 code {
   font-family: var(--pckt-font-mono);
   font-size: 0.8125em;
+}
+
+.domain-steps {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+  display: grid;
+  gap: 0.375rem;
+}
+
+.domain-check {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.domain-check .input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.domain-results {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.domain-ok {
+  color: #1faf38;
+  font-weight: 700;
+}
+
+.domain-bad {
+  color: var(--pckt-danger);
+  font-weight: 700;
 }
 </style>

@@ -16,7 +16,10 @@
 						"wiki.pckt.policy",
 						"wiki.pckt.pageGrant",
 						"wiki.pckt.suggestion",
-						"wiki.pckt.approvedMedia"
+						"wiki.pckt.approvedMedia",
+						"wiki.pckt.dockButton",
+						"wiki.pckt.dockItem",
+						"wiki.pckt.forumTopic"
 					]
 				}
 			]

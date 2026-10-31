@@ -1,0 +1,48 @@
+{
+	"lexicon": 1,
+	"id": "wiki.pckt.dockItem",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "One extra dock button on a wiki, beyond the wiki's navbarLinks. Two shapes: a linked button (buttonRef set) stays live from the creator's wiki.pckt.dockButton record, so the creator's art and label updates flow through; a forked button (label + href + art set) is a copy whose art lives in this wiki's repo and whose destination can be edited freely.",
+			"key": "tid",
+			"record": {
+				"type": "object",
+				"required": ["wikiRef", "createdAt"],
+				"properties": {
+					"wikiRef": {
+						"type": "string",
+						"format": "at-uri",
+						"description": "AT-URI of the wiki showing this button."
+					},
+					"buttonRef": {
+						"type": "string",
+						"format": "at-uri",
+						"description": "Linked shape: AT-URI of the shared wiki.pckt.dockButton record."
+					},
+					"label": {
+						"type": "string",
+						"maxLength": 64,
+						"description": "Forked shape: the button label shown under the bubble."
+					},
+					"href": {
+						"type": "string",
+						"maxLength": 1024,
+						"description": "Forked shape: where the button leads — a wiki path like /@handle/wiki/slug or an absolute URL."
+					},
+					"art": {
+						"type": "blob",
+						"accept": ["image/webp", "image/png"],
+						"maxSize": 1000000,
+						"description": "Forked shape: the bubble art, held in this wiki's repo."
+					},
+					"createdAt": {
+						"type": "string",
+						"format": "datetime",
+						"description": "When the button was added to the wiki."
+					}
+				}
+			}
+		}
+	}
+}
