@@ -10,13 +10,13 @@ export interface PrepareImageOptions {
 
 const PRESETS: Record<ImageUploadPreset, PrepareImageOptions> = {
   // Article body: readable on retina, far under the 2MB lexicon cap.
-  article: { maxEdge: 1600, quality: 0.82 },
+  article: { maxEdge: 1600, quality: 0.9 },
   // Compact companion for srcset / search / media-grid (phone-width article slot).
-  thumb: { maxEdge: 640, quality: 0.72 },
+  thumb: { maxEdge: 640, quality: 0.8 },
   // Wiki header / logo marks.
-  header: { maxEdge: 800, quality: 0.85 },
+  header: { maxEdge: 800, quality: 0.92 },
   // Subheader / nav icons (~88–140px CSS; 2× retina ≈ 280).
-  icon: { maxEdge: 256, quality: 0.76 },
+  icon: { maxEdge: 256, quality: 0.9 },
 }
 
 const SKIP_TYPES = new Set(['image/svg+xml', 'image/gif'])
@@ -104,18 +104,34 @@ export async function prepareImageUpload(
     const ctx = canvas.getContext('2d')
     if (!ctx) return file
 
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(bitmap, 0, 0, targetW, targetH)
 
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((result) => resolve(result), mime, quality)
-    })
+    const encode = (mime: string) =>
+      new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((result) => resolve(result), mime, quality)
+      })
 
+    const blob = await encode(mime)
     if (!blob || blob.size === 0) return file
-    // Prefer the smaller of original vs compressed (e.g. tiny PNGs).
-    if (blob.size >= file.size && scale >= 1) return file
 
-    return new File([blob], renameFile(file.name, ext), {
-      type: mime,
+    // Smart PNG path: lossy WebP can smear pixel art and flat-colour
+    // illustrations, so also encode a resized PNG (pixel-exact) and keep
+    // whichever is smaller. Photographs always go WebP.
+    let best = { blob, mime, ext }
+    if (file.type === 'image/png' && supportsWebpEncode()) {
+      const pngBlob = await encode('image/png')
+      if (pngBlob && pngBlob.size > 0 && pngBlob.size < blob.size) {
+        best = { blob: pngBlob, mime: 'image/png', ext: 'png' }
+      }
+    }
+
+    // Prefer the smaller of original vs compressed (e.g. tiny PNGs).
+    if (best.blob.size >= file.size && scale >= 1) return file
+
+    return new File([best.blob], renameFile(file.name, best.ext), {
+      type: best.mime,
       lastModified: file.lastModified,
     })
   } finally {

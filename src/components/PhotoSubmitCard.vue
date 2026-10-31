@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
 import { uploadBlob } from '@/lib/atproto/blobs'
+import { prepareImageUpload } from '@/lib/media/prepare-image-upload'
 
 /**
  * Photo-submission entry point for contributors the wiki's image policy
@@ -33,8 +34,9 @@ async function submit() {
   done.value = false
   try {
     const blobs: Record<string, unknown>[] = []
-    for (const file of Array.from(input.files).slice(0, 5)) {
-      const uploaded = await uploadBlob(auth.agent, file)
+    for (const raw of Array.from(input.files).slice(0, 5)) {
+      const prepared = await prepareImageUpload(raw, 'article')
+      const uploaded = await uploadBlob(auth.agent, prepared)
       blobs.push(uploaded.blob as Record<string, unknown>)
     }
     await lichen.submitSuggestion(auth.agent, {
