@@ -5,6 +5,8 @@ import { useMenuDismissGroup } from '@/composables/useMenuDismissGroup'
 import { useOverlayDismiss } from '@/composables/useOverlayDismiss'
 import { useKeyboardNav } from '@/composables/useKeyboardNavProvider'
 import { useThemeMode } from '@/composables/useThemeMode'
+import { useWikiThemeMode } from '@/composables/useWikiThemeMode'
+import { canManage } from '@/lib/lichen/collections'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
 import { wikiPath } from '@/data/featured-wikis'
@@ -24,6 +26,22 @@ const auth = useAuthStore()
 const lichen = useLichenStore()
 const nav = useKeyboardNav()
 const { mode: themeMode, label: themeLabel, nextLabel: themeNextLabel, cycleMode } = useThemeMode()
+const { enter: enterWikiThemeMode } = useWikiThemeMode()
+
+/** Wiki-theme editing is offered only while viewing a wiki this account manages. */
+const canEditWikiTheme = computed(
+  () =>
+    !!lichen.currentWiki &&
+    !!auth.did &&
+    lichen.currentWiki.ownerDid === auth.did &&
+    canManage(lichen.access),
+)
+
+/** Enter wiki theme mode from the menu, closing the menu first. */
+function openWikiThemeMode() {
+  close()
+  enterWikiThemeMode()
+}
 const open = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const menuLoaded = ref(false)
@@ -345,6 +363,31 @@ watch(open, (isOpen) => {
                 </svg>
               </span>
               <span>Appearance · {{ themeLabel }}</span>
+            </button>
+          </li>
+          <li v-if="canEditWikiTheme">
+            <button
+              type="button"
+              class="account-menu-link"
+              role="menuitem"
+              title="Recolor this wiki's layout"
+              @click.stop="openWikiThemeMode"
+            >
+              <span class="account-menu-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18">
+                  <path
+                    d="M12 3a9 9 0 0 0 0 18c1.5 0 2-1 1.4-2.1-.7-1.2.1-2.4 1.5-2.4H17a4 4 0 0 0 4-4c0-5-4-9.5-9-9.5z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                  />
+                  <circle cx="7.5" cy="11.5" r="1.25" fill="currentColor" />
+                  <circle cx="10.5" cy="7.5" r="1.25" fill="currentColor" />
+                  <circle cx="15" cy="7.5" r="1.25" fill="currentColor" />
+                </svg>
+              </span>
+              <span>Wiki theme</span>
             </button>
           </li>
           <li>

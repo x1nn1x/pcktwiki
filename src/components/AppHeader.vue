@@ -38,7 +38,6 @@ const {
 const {
   active: themeModeActive,
   saving: themeSaving,
-  enter: enterThemeMode,
   discard: discardTheme,
   commit: commitTheme,
 } = useWikiThemeMode()
@@ -57,14 +56,6 @@ function onEditModeClick() {
 
 function discardEdits() {
   exitEditMode()
-}
-
-async function onThemeModeClick() {
-  if (!themeModeActive.value) {
-    enterThemeMode()
-    return
-  }
-  await commitTheme()
 }
 
 const isHome = computed(() => route.name === 'home')
@@ -440,17 +431,17 @@ function onBrandMenuClick(event: Event, toggle: (event: Event) => void) {
             >
               Cancel
             </button>
+            <!-- Wiki theme mode is entered from the profile menu; while it is
+                 active these editing controls stay on the bar. -->
             <button
-              v-if="canUseThemeMode"
+              v-if="canUseThemeMode && themeModeActive"
               type="button"
-              class="btn btn-sm"
-              :class="themeModeActive ? 'btn-primary' : 'btn-ghost'"
-              :aria-pressed="themeModeActive"
+              class="btn btn-primary btn-sm"
               :disabled="themeSaving || editModeActive"
-              :title="themeModeActive ? 'Save wiki theme and leave theme mode' : 'Enter theme mode'"
-              @click="onThemeModeClick"
+              title="Save wiki theme and leave theme mode"
+              @click="commitTheme"
             >
-              {{ themeModeActive ? (themeSaving ? 'Saving…' : 'Save theme') : 'Theme' }}
+              {{ themeSaving ? 'Saving…' : 'Save theme' }}
             </button>
             <HeaderNotifications />
             <HeaderProfileMenu />
