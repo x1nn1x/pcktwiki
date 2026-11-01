@@ -299,11 +299,13 @@ export default defineConfig({
             },
           },
           {
+            // Avatars/media from Bluesky's CDN (versioned URLs, immutable).
             urlPattern: /^https:\/\/cdn\.bsky\.app\/img\//i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'bsky-cdn-images',
-              expiration: { maxEntries: 200, maxAgeSeconds: 604_800 },
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 300, maxAgeSeconds: 2_592_000 },
             },
           },
           {
@@ -323,14 +325,19 @@ export default defineConfig({
             },
           },
           {
-            // Wiki media is immutable by CID — cache aggressively for slow links / revisits.
+            // Wiki media is immutable by CID: the same URL always returns the
+            // same bytes, so CacheFirst is forever-correct. PDSes send
+            // `cache-control: private`, which makes the browser refetch on
+            // every refresh — this cache is what stops that. 600 entries /
+            // 180 days holds a media-heavy wiki's whole library.
             urlPattern: ({ url }) => url.pathname.includes('/xrpc/com.atproto.sync.getBlob'),
             handler: 'CacheFirst',
             options: {
               cacheName: 'atproto-blobs',
+              cacheableResponse: { statuses: [0, 200] },
               expiration: {
-                maxEntries: 120,
-                maxAgeSeconds: 604_800,
+                maxEntries: 600,
+                maxAgeSeconds: 15_552_000,
               },
             },
           },
