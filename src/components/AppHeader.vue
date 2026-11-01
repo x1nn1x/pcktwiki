@@ -195,6 +195,14 @@ const showNavbarLinks = computed(
 )
 
 const canManageWikiChrome = computed(() => isWikiView.value && canManage(lichen.access))
+/** Forum link for the wiki being viewed — anyone can read and discuss. */
+const forumPath = computed(() => {
+  if (!isWikiView.value) return null
+  const handle = routeWikiHandle.value
+  const slug = lichen.currentWiki?.slug ?? routeWikiSlug.value
+  return handle && slug ? `/@${handle}/${slug}/forum` : null
+})
+
 const canUseEditMode = computed(
   () => isWikiView.value && (canEdit(lichen.access) || canManage(lichen.access)),
 )
@@ -460,6 +468,35 @@ function onBrandMenuClick(event: Event, toggle: (event: Event) => void) {
             >
               {{ themeSaving ? 'Saving…' : 'Save theme' }}
             </button>
+            <!-- Forum is readable by anyone on a wiki view, unlike Edit. -->
+            <RouterLink
+              v-if="forumPath"
+              :to="forumPath"
+              class="btn btn-ghost btn-sm header-forum-btn"
+              title="Forum"
+              aria-label="Forum"
+            >
+              <svg
+                class="header-forum-icon"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  fill="currentColor"
+                  d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9.4L5 20.7a1 1 0 0 1-1.6-.8V16a1 1 0 0 1 0-2V6a2 2 0 0 1 2-2z"
+                />
+                <path
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  d="M8 9h8M8 12.5h5"
+                />
+              </svg>
+            </RouterLink>
             <HeaderNotifications />
             <HeaderProfileMenu />
           </template>
@@ -684,6 +721,20 @@ header.header-has-wiki-nav .header-wiki-nav {
   min-width: 2rem;
   padding: 0.25rem 0.5rem;
   line-height: 0;
+}
+
+.header-forum-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0.25rem 0.5rem;
+  line-height: 0;
+}
+
+.header-forum-icon {
+  display: block;
+  flex-shrink: 0;
 }
 
 .header-edit-icon {
