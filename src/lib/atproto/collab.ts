@@ -37,6 +37,14 @@ export async function listPolicies(agent: Agent, did: string): Promise<LichenPol
     suggestionsEnabled: value.suggestionsEnabled as boolean | undefined,
     imageMode: value.imageMode as LichenPolicyRecord['imageMode'],
     imageSubmissions: value.imageSubmissions as boolean | undefined,
+    forumEnabled: value.forumEnabled as boolean | undefined,
+    forumThreads: value.forumThreads as LichenPolicyRecord['forumThreads'],
+    forumMods: Array.isArray(value.forumMods)
+      ? value.forumMods.filter((m): m is string => typeof m === 'string')
+      : undefined,
+    forumHiddenPosts: Array.isArray(value.forumHiddenPosts)
+      ? value.forumHiddenPosts.filter((p): p is string => typeof p === 'string')
+      : undefined,
   }))
 }
 
@@ -45,6 +53,10 @@ export interface PolicyFields {
   suggestionsEnabled?: boolean
   imageMode?: WikiImageMode
   imageSubmissions?: boolean
+  forumEnabled?: boolean
+  forumThreads?: LichenPolicyRecord['forumThreads']
+  forumMods?: string[]
+  forumHiddenPosts?: string[]
 }
 
 export async function writePolicyRecord(
@@ -65,6 +77,12 @@ export async function writePolicyRecord(
     ...(fields.imageMode ? { imageMode: fields.imageMode } : {}),
     ...(fields.imageSubmissions !== undefined
       ? { imageSubmissions: fields.imageSubmissions }
+      : {}),
+    ...(fields.forumEnabled !== undefined ? { forumEnabled: fields.forumEnabled } : {}),
+    ...(fields.forumThreads ? { forumThreads: fields.forumThreads } : {}),
+    ...(fields.forumMods !== undefined ? { forumMods: [...fields.forumMods] } : {}),
+    ...(fields.forumHiddenPosts !== undefined
+      ? { forumHiddenPosts: [...fields.forumHiddenPosts] }
       : {}),
   })
 

@@ -18,6 +18,8 @@ export type SuggestionStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
  * Collaboration policy for one wiki (`wiki.pckt.policy`). Fields are optional
  * so a partial record falls back to `DEFAULT_WIKI_POLICY` per field.
  */
+export type ForumThreadAccess = 'anyone' | 'permitted'
+
 export interface LichenPolicyRecord {
   uri: string
   cid: string
@@ -27,6 +29,12 @@ export interface LichenPolicyRecord {
   suggestionsEnabled?: boolean
   imageMode?: WikiImageMode
   imageSubmissions?: boolean
+  forumEnabled?: boolean
+  forumThreads?: ForumThreadAccess
+  /** DIDs of forum moderators (hide topics/posts from this wiki's forum). */
+  forumMods?: string[]
+  /** AT-URIs of posts hidden from this wiki's forum. */
+  forumHiddenPosts?: string[]
 }
 
 export interface LichenPageGrantRecord {

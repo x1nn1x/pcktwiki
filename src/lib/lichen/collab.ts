@@ -23,6 +23,10 @@ export interface ResolvedWikiPolicy {
   suggestionsEnabled: boolean
   imageMode: WikiImageMode
   imageSubmissions: boolean
+  forumEnabled: boolean
+  forumThreads: 'anyone' | 'permitted'
+  forumMods: string[]
+  forumHiddenPosts: string[]
 }
 
 export const DEFAULT_WIKI_POLICY: ResolvedWikiPolicy = {
@@ -30,6 +34,10 @@ export const DEFAULT_WIKI_POLICY: ResolvedWikiPolicy = {
   suggestionsEnabled: true,
   imageMode: 'any',
   imageSubmissions: false,
+  forumEnabled: true,
+  forumThreads: 'anyone',
+  forumMods: [],
+  forumHiddenPosts: [],
 }
 
 /** Fill gaps in a (possibly absent) policy record with documented defaults. */
@@ -40,6 +48,45 @@ export function resolveWikiPolicy(record: LichenPolicyRecord | null | undefined)
     suggestionsEnabled: record.suggestionsEnabled ?? DEFAULT_WIKI_POLICY.suggestionsEnabled,
     imageMode: record.imageMode ?? DEFAULT_WIKI_POLICY.imageMode,
     imageSubmissions: record.imageSubmissions ?? DEFAULT_WIKI_POLICY.imageSubmissions,
+    forumEnabled: record.forumEnabled ?? DEFAULT_WIKI_POLICY.forumEnabled,
+    forumThreads: record.forumThreads ?? DEFAULT_WIKI_POLICY.forumThreads,
+    forumMods: record.forumMods ?? DEFAULT_WIKI_POLICY.forumMods,
+    forumHiddenPosts: record.forumHiddenPosts ?? DEFAULT_WIKI_POLICY.forumHiddenPosts,
+  }
+}
+
+export interface ForumCapabilities {
+  /** Whether the wiki's forum renders at all. */
+  enabled: boolean
+  /** Whether this viewer may start new threads (replies are separate). */
+  canStartThreads: boolean
+  /** Owner, forum mod, or wiki admin membership — can hide posts. */
+  canModerate: boolean
+}
+
+/**
+ * Forum rights for one viewer. Thread-starting under 'permitted' belongs to
+ * the owner, forum mods, and anyone holding a wiki membership — joining the
+ * wiki is the permit. Hiding is the wiki's presentation layer; the underlying
+ * Bluesky posts always remain in their authors' repos.
+ */
+export function resolveForumCapabilities(input: {
+  policy: ResolvedWikiPolicy
+  ownerDid: string
+  viewerDid: string | null
+  /** Viewer's wiki membership role, when any. */
+  memberRole: MemberRole | null
+}): ForumCapabilities {
+  const { policy, ownerDid, viewerDid, memberRole } = input
+  const isOwner = !!viewerDid && viewerDid === ownerDid
+  const isMod = !!viewerDid && policy.forumMods.includes(viewerDid)
+  const isWikiAdmin = memberRole === 'admin'
+  const permitted = isOwner || isMod || memberRole !== null
+  return {
+    enabled: policy.forumEnabled,
+    canStartThreads:
+      policy.forumEnabled && (!!viewerDid && (policy.forumThreads === 'anyone' || permitted)),
+    canModerate: isOwner || isMod || isWikiAdmin,
   }
 }
 

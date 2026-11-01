@@ -11,6 +11,7 @@ import {
   listForumTopics,
   type ForumTopicRecord,
 } from '@/lib/pckt-records'
+import { resolveForumCapabilities, resolveWikiPolicy } from '@/lib/lichen/collab'
 import { fetchThread, threadChunks, type ThreadTree } from '@/lib/forum'
 import ForumComposer from '@/components/ForumComposer.vue'
 
@@ -51,6 +52,50 @@ const canManageWiki = computed(() => {
   const wiki = lichen.currentWiki
   return !!auth.did && !!wiki && wiki.ownerDid === auth.did
 })
+
+/** Forum rights for this viewer, from the wiki's policy + memberships. */
+const forumCaps = computed(() => {
+  const wiki = lichen.currentWiki
+  if (!wiki) {
+    return { enabled: true, canStartThreads: !!auth.did, canModerate: false }
+  }
+  const membership = lichen.memberships.find(
+    (m) => m.wikiRef === wiki.uri && m.memberDid === auth.did,
+  )
+  return resolveForumCapabilities({
+    policy: resolveWikiPolicy(
+      lichen.policyRecord?.wikiRef === wiki.uri ? lichen.policyRecord : null,
+    ),
+    ownerDid: wiki.ownerDid,
+    viewerDid: auth.did,
+    memberRole: membership ? (membership.role as 'admin' | 'contributor' | 'viewer') : null,
+  })
+})
+
+const hiddenPosts = computed(
+  () =>
+    new Set(resolveWikiPolicy(lichen.policyRecord).forumHiddenPosts),
+)
+
+/** Server-side (owner/mod) hide — applies to every visitor. */
+async function hidePostEverywhere(postUri: string) {
+  if (!auth.agent || !forumCaps.value.canModerate) return
+  if (!confirm('Hide this from the wiki forum for everyone? It stays on Bluesky.')) return
+  try {
+    await lichen.setForumPostHidden(auth.agent, postUri, true)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Could not hide the post'
+  }
+}
+
+async function unhidePostEverywhere(postUri: string) {
+  if (!auth.agent || !forumCaps.value.canModerate) return
+  try {
+    await lichen.setForumPostHidden(auth.agent, postUri, false)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Could not restore the post'
+  }
+}
 
 const hidden = ref(readHidden())
 const visibleTopics = computed(() => topics.value.filter((t) => !hidden.value.has(t.rootPost)))
@@ -117,10 +162,16 @@ async function expand(topic: ForumTopicRecord) {
   }
 }
 
-const filtered = computed(() =>
-  noteFilter.value
+const filtered = computed(() => {
+  const byNote = noteFilter.value
     ? visibleTopics.value.filter((t) => t.noteSlug === noteFilter.value)
-    : visibleTopics.value,
+    : visibleTopics.value
+  return byNote.filter((t) => !hiddenPosts.value.has(t.rootPost))
+})
+
+/** Topics hidden by mods, listed for reversal (mod-only). */
+const hiddenTopicRows = computed(() =>
+  topics.value.filter((t) => hiddenPosts.value.has(t.rootPost)),
 )
 
 const pageLinkUrl = computed(() => {
@@ -168,15 +219,34 @@ watch(() => route.fullPath, load)
         </p>
       </header>
 
-      <section class="card forum-composer-card">
+      <div v-if="!forumCaps.enabled" class="card forum-closed">
+        <h2>The forum is turned off</h2>
+        <p class="muted">
+          The owner of this wiki has closed the forum. Pages, edits, and suggestions work as
+          usual.
+        </p>
+        <RouterLink
+          v-if="canManageWiki"
+          class="btn btn-secondary btn-sm"
+          :to="`/@${handle}/${wikiSlug}/settings`"
+        >
+          Re-enable it in settings
+        </RouterLink>
+      </div>
+
+      <section v-else class="card forum-composer-card">
         <button
-          v-if="!composerOpen"
+          v-if="!composerOpen && forumCaps.canStartThreads"
           type="button"
           class="btn btn-primary"
           @click="composerOpen = true"
         >
           {{ noteFilter ? `Discuss “${noteFilter}”` : 'Start a discussion' }}
         </button>
+        <p v-else-if="!composerOpen && auth.isAuthenticated" class="muted forum-perm-note">
+          Starting new discussions is limited to this wiki's members and mods — but anyone
+          signed in can reply to the ones below.
+        </p>
         <ForumComposer
           v-else
           ref="composerRef"
@@ -189,6 +259,24 @@ watch(() => route.fullPath, load)
           <RouterLink :to="{ name: 'home', query: { redirect: route.fullPath } }">Sign in</RouterLink>
           to start a discussion — replies happen right on Bluesky.
         </p>
+      </section>
+
+      <section v-if="forumCaps.canModerate && hiddenTopicRows.length" class="card forum-hidden-card">
+        <h2>Hidden by moderators</h2>
+        <ul class="forum-hidden-list">
+          <li v-for="row in hiddenTopicRows" :key="row.uri">
+            <span class="forum-hidden-copy">
+              {{ excerpts[row.rootPost]?.text.slice(0, 70) ?? row.rootPost }}…
+              <span class="muted">@{{ excerpts[row.rootPost]?.author ?? '…' }}</span>
+            </span>
+            <a :href="bskyUrl(row.rootPost)" target="_blank" rel="noopener noreferrer" class="muted">
+              Bluesky ↗
+            </a>
+            <button type="button" class="btn btn-ghost btn-sm" @click="unhidePostEverywhere(row.rootPost)">
+              Unhide
+            </button>
+          </li>
+        </ul>
       </section>
 
       <p v-if="loading" class="muted">Loading discussions…</p>
@@ -245,6 +333,14 @@ watch(() => route.fullPath, load)
                   <template v-if="index > 0"> <span class="muted">· continued</span></template>
                 </p>
                 <p class="forum-post-text">{{ chunk.text }}</p>
+                <button
+                  v-if="forumCaps.canModerate && index > 0"
+                  type="button"
+                  class="btn btn-ghost btn-sm forum-post-hide"
+                  @click="hidePostEverywhere(chunk.uri)"
+                >
+                  Hide
+                </button>
               </div>
             </div>
             <div
@@ -265,6 +361,14 @@ watch(() => route.fullPath, load)
                   <span class="muted">@{{ reply.post.author.handle }}</span>
                 </p>
                 <p class="forum-post-text">{{ reply.post.text }}</p>
+                <button
+                  v-if="forumCaps.canModerate"
+                  type="button"
+                  class="btn btn-ghost btn-sm forum-post-hide"
+                  @click="hidePostEverywhere(reply.post.uri)"
+                >
+                  Hide
+                </button>
               </div>
             </div>
           </template>
@@ -286,7 +390,16 @@ watch(() => route.fullPath, load)
               View on Bluesky
             </a>
             <button
-              v-if="canManageWiki"
+              v-if="forumCaps.canModerate"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              title="Hide this whole thread from the wiki for everyone"
+              @click="hidePostEverywhere(topic.rootPost)"
+            >
+              Hide for everyone
+            </button>
+            <button
+              v-else-if="canManageWiki"
               type="button"
               class="btn btn-ghost btn-sm"
               @click="hideTopic(topic.rootPost)"
@@ -409,6 +522,67 @@ header p {
   font-size: 0.9375rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.forum-hidden-card {
+  padding: 1rem 1.25rem;
+}
+
+.forum-hidden-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9375rem;
+  color: var(--pckt-text-muted);
+}
+
+.forum-hidden-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.375rem;
+}
+
+.forum-hidden-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 0.8125rem;
+}
+
+.forum-hidden-copy {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.forum-closed {
+  padding: 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.forum-closed h2 {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.forum-closed p {
+  margin: 0;
+}
+
+.forum-perm-note {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.forum-post-hide {
+  margin-top: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.6875rem;
 }
 
 .forum-topic-actions {

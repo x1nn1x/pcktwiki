@@ -1768,6 +1768,33 @@ export const useLichenStore = defineStore('lichen', () => {
     await resolveAccess(agent, currentWiki.value, currentViewerDid.value)
   }
 
+  /**
+   * Hide (or restore) a Bluesky post on this wiki's forum — the owner/mod
+   * moderation action. The post itself stays in its author's repo; the wiki's
+   * policy record carries the hidden list every visitor reads.
+   */
+  async function setForumPostHidden(
+    agent: Agent,
+    postUri: string,
+    hidden: boolean,
+  ): Promise<void> {
+    if (!currentWiki.value) throw new Error('No wiki selected')
+    const existing = resolveWikiPolicy(policyRecord.value)
+    const set = new Set(existing.forumHiddenPosts)
+    if (hidden) set.add(postUri)
+    else set.delete(postUri)
+    await setWikiPolicy(agent, {
+      editAccess: existing.editAccess,
+      suggestionsEnabled: existing.suggestionsEnabled,
+      imageMode: existing.imageMode,
+      imageSubmissions: existing.imageSubmissions,
+      forumEnabled: existing.forumEnabled,
+      forumThreads: existing.forumThreads,
+      forumMods: existing.forumMods,
+      forumHiddenPosts: [...set],
+    })
+  }
+
   async function addPageGrant(
     agent: Agent,
     noteSlug: string,
@@ -2458,6 +2485,7 @@ export const useLichenStore = defineStore('lichen', () => {
     updateMemberRole,
     removeMember,
     setWikiPolicy,
+    setForumPostHidden,
     addPageGrant,
     removePageGrant,
     addApprovedMedia,

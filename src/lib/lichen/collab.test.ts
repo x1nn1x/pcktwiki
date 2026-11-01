@@ -3,6 +3,7 @@ import {
   extractImageEmbeds,
   findDisallowedImages,
   findPageGrant,
+  resolveForumCapabilities,
   resolveViewerCapabilities,
   resolveWikiPolicy,
   withPageGrant,
@@ -181,6 +182,88 @@ describe('findPageGrant', () => {
     expect(findPageGrant(grants, WIKI_REF, 'castle', VIEWER)?.uri).toContain('/1')
     expect(findPageGrant(grants, WIKI_REF, 'home', VIEWER)).toBeNull()
     expect(findPageGrant(grants, WIKI_REF, 'castle', null)).toBeNull()
+  })
+})
+
+describe('resolveForumCapabilities', () => {
+  const base = { ...DEFAULT_WIKI_POLICY }
+
+  it('defaults: forum on, anyone signed in can start threads', () => {
+    const caps = resolveForumCapabilities({
+      policy: base,
+      ownerDid: OWNER,
+      viewerDid: VIEWER,
+      memberRole: null,
+    })
+    expect(caps.enabled).toBe(true)
+    expect(caps.canStartThreads).toBe(true)
+    expect(caps.canModerate).toBe(false)
+  })
+
+  it('guests cannot start threads even when anyone can', () => {
+    expect(
+      resolveForumCapabilities({
+        policy: base,
+        ownerDid: OWNER,
+        viewerDid: null,
+        memberRole: null,
+      }).canStartThreads,
+    ).toBe(false)
+  })
+
+  it('owner always moderates', () => {
+    const caps = resolveForumCapabilities({
+      policy: base,
+      ownerDid: OWNER,
+      viewerDid: OWNER,
+      memberRole: null,
+    })
+    expect(caps.canModerate).toBe(true)
+    expect(caps.canStartThreads).toBe(true)
+  })
+
+  it('permitted mode: members may start threads, strangers may not', () => {
+    const policy = { ...base, forumThreads: 'permitted' as const }
+    expect(
+      resolveForumCapabilities({ policy, ownerDid: OWNER, viewerDid: VIEWER, memberRole: 'viewer' })
+        .canStartThreads,
+    ).toBe(true)
+    expect(
+      resolveForumCapabilities({ policy, ownerDid: OWNER, viewerDid: VIEWER, memberRole: null })
+        .canStartThreads,
+    ).toBe(false)
+  })
+
+  it('forum mods moderate and start threads under permitted mode', () => {
+    const policy = { ...base, forumThreads: 'permitted' as const, forumMods: [VIEWER] }
+    const caps = resolveForumCapabilities({
+      policy,
+      ownerDid: OWNER,
+      viewerDid: VIEWER,
+      memberRole: null,
+    })
+    expect(caps.canModerate).toBe(true)
+    expect(caps.canStartThreads).toBe(true)
+  })
+
+  it('membership admins moderate too', () => {
+    expect(
+      resolveForumCapabilities({ policy: base, ownerDid: OWNER, viewerDid: VIEWER, memberRole: 'admin' })
+        .canModerate,
+    ).toBe(true)
+  })
+
+  it('disabled forum turns everything off for everyone', () => {
+    const policy = { ...base, forumEnabled: false, forumMods: [VIEWER] }
+    const caps = resolveForumCapabilities({
+      policy,
+      ownerDid: OWNER,
+      viewerDid: VIEWER,
+      memberRole: 'admin',
+    })
+    expect(caps.enabled).toBe(false)
+    expect(caps.canStartThreads).toBe(false)
+    expect(caps.canModerate).toBe(true)
   })
 })
 

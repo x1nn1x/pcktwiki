@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useLichenStore } from '@/stores/lichen'
 import { resolveWikiPolicy } from '@/lib/lichen/collab'
+import type { ForumThreadAccess } from '@/types/lichen'
 import { getAuthenticatedAgent, resolveHandleToDid } from '@/lib/atproto/auth'
 import HandleTypeahead from '@/components/HandleTypeahead.vue'
 import type { PageGrantRole, WikiEditAccess, WikiImageMode } from '@/types/lichen'
@@ -23,6 +24,11 @@ const editAccess = ref<WikiEditAccess>('members')
 const suggestionsEnabled = ref(true)
 const imageMode = ref<WikiImageMode>('any')
 const imageSubmissions = ref(false)
+const forumEnabled = ref(true)
+const forumThreads = ref<ForumThreadAccess>('anyone')
+const forumMods = ref<string[]>([])
+const modHandle = ref('')
+const modError = ref('')
 const policySaved = ref(false)
 const policySaving = ref(false)
 const policyError = ref('')
@@ -35,6 +41,9 @@ watch(
     suggestionsEnabled.value = resolved.suggestionsEnabled
     imageMode.value = resolved.imageMode
     imageSubmissions.value = resolved.imageSubmissions
+    forumEnabled.value = resolved.forumEnabled
+    forumThreads.value = resolved.forumThreads
+    forumMods.value = [...resolved.forumMods]
     policySaved.value = false
   },
   { immediate: true },
@@ -51,6 +60,9 @@ async function savePolicy() {
       suggestionsEnabled: suggestionsEnabled.value,
       imageMode: imageMode.value,
       imageSubmissions: imageSubmissions.value,
+      forumEnabled: forumEnabled.value,
+      forumThreads: forumThreads.value,
+      forumMods: [...forumMods.value],
     })
     policySaved.value = true
     setTimeout(() => {
@@ -87,6 +99,30 @@ async function agentForWrite() {
   // store actions write through the wiki owner's repo, which only the
   // owner's session can actually reach.
   return getAuthenticatedAgent()
+}
+
+async function addMod() {
+  const agent = await agentForWrite()
+  const raw = modHandle.value.trim()
+  if (!agent || !raw) return
+  modError.value = ''
+  try {
+    const did = raw.startsWith('did:') ? raw : await resolveHandleToDid(raw)
+    if (forumMods.value.includes(did)) {
+      modError.value = 'Already a mod'
+      return
+    }
+    forumMods.value = [...forumMods.value, did]
+    modHandle.value = ''
+    await savePolicy()
+  } catch (err) {
+    modError.value = err instanceof Error ? err.message : 'Could not add the mod'
+  }
+}
+
+async function removeMod(did: string) {
+  forumMods.value = forumMods.value.filter((m) => m !== did)
+  await savePolicy()
 }
 
 async function addGrant() {
@@ -184,6 +220,52 @@ async function removeMedia(uri: string) {
       {{ policySaving ? 'Saving…' : policySaved ? 'Saved!' : 'Save collaboration policy' }}
     </button>
     <p v-if="policyError" class="error-text">{{ policyError }}</p>
+  </section>
+
+  <section class="card section">
+    <h2>Forum</h2>
+    <p class="muted">
+      Discussions run on Bluesky threads anchored to this wiki. Mods can hide any topic or
+      reply from this wiki's forum — the posts themselves stay on Bluesky.
+    </p>
+
+    <div class="field">
+      <label class="check">
+        <input v-model="forumEnabled" type="checkbox" />
+        <span>Forum enabled <span class="muted">— off closes it to everyone</span></span>
+      </label>
+    </div>
+
+    <div class="field">
+      <label class="label" for="forum-threads">Who can start new discussions</label>
+      <select id="forum-threads" v-model="forumThreads" class="select">
+        <option value="anyone">Anyone signed in</option>
+        <option value="permitted">Members and mods only — others can still reply</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label class="label" for="forum-mod">Forum mods (can hide posts)</label>
+      <HandleTypeahead
+        id="forum-mod"
+        v-model="modHandle"
+        placeholder="@friend.bsky.social"
+        @select="addMod"
+      />
+      <ul v-if="forumMods.length" class="member-list">
+        <li v-for="did in forumMods" :key="did">
+          <code class="member-id">{{ did }}</code>
+          <button type="button" class="btn btn-ghost btn-sm" @click="removeMod(did)">
+            Remove
+          </button>
+        </li>
+      </ul>
+      <p v-if="modError" class="error-text">{{ modError }}</p>
+    </div>
+
+    <button type="button" class="btn btn-secondary" :disabled="policySaving" @click="savePolicy">
+      {{ policySaving ? 'Saving…' : 'Save forum settings' }}
+    </button>
   </section>
 
   <section class="card section">

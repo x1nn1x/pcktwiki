@@ -8,7 +8,10 @@
 			"key": "tid",
 			"record": {
 				"type": "object",
-				"required": ["wikiRef", "createdAt"],
+				"required": [
+					"wikiRef",
+					"createdAt"
+				],
 				"properties": {
 					"wikiRef": {
 						"type": "string",
@@ -23,7 +26,11 @@
 					"editAccess": {
 						"type": "string",
 						"maxLength": 32,
-						"knownValues": ["members", "followers", "anyone"],
+						"knownValues": [
+							"members",
+							"followers",
+							"anyone"
+						],
 						"description": "Who may contribute edits beyond the wiki owner and members. 'members' (default) only membership records grant access; 'followers' adds people the wiki owner follows; 'anyone' adds any signed-in user. Contributors who cannot publish to the wiki repo submit suggestions for review instead."
 					},
 					"suggestionsEnabled": {
@@ -33,12 +40,47 @@
 					"imageMode": {
 						"type": "string",
 						"maxLength": 32,
-						"knownValues": ["any", "approved", "none"],
+						"knownValues": [
+							"any",
+							"approved",
+							"none"
+						],
 						"description": "What images non-owner contributors may embed. 'any' (default) allows uploading new blobs; 'approved' restricts embeds to wiki.pckt.approvedMedia entries; 'none' allows text-only edits."
 					},
 					"imageSubmissions": {
 						"type": "boolean",
 						"description": "Whether contributors may submit photos to the wiki's approved-media queue even when imageMode blocks direct embedding. Default false."
+					},
+					"forumEnabled": {
+						"type": "boolean",
+						"description": "Whether the wiki's forum section is on. Default true. When false, apps should show the forum as closed instead of listing topics."
+					},
+					"forumThreads": {
+						"type": "string",
+						"maxLength": 32,
+						"knownValues": [
+							"anyone",
+							"permitted"
+						],
+						"description": "Who may start new forum threads. 'anyone' (default) lets any signed-in user start one; 'permitted' restricts new threads to the wiki owner, forum mods, and wiki members — everyone else can still reply to existing threads."
+					},
+					"forumMods": {
+						"type": "array",
+						"maxLength": 100,
+						"items": {
+							"type": "string",
+							"maxLength": 2048
+						},
+						"description": "DIDs of forum moderators. Mods can hide topics and individual posts from this wiki's forum (posts remain on Bluesky — hiding is the wiki's presentation layer)."
+					},
+					"forumHiddenPosts": {
+						"type": "array",
+						"maxLength": 1000,
+						"items": {
+							"type": "string",
+							"maxLength": 2048
+						},
+						"description": "AT-URIs of Bluesky posts hidden from this wiki's forum by the owner or mods, whole threads (root post) or single replies."
 					}
 				}
 			}
