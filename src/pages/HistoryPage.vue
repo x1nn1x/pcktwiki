@@ -694,7 +694,6 @@ header h1 {
 }
 
 .purge-zone {
-.purge-zone {
   padding: 1rem 1.25rem;
   border-color: color-mix(in srgb, var(--pckt-danger) 35%, var(--pckt-border));
 }
