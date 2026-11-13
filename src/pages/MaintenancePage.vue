@@ -453,7 +453,6 @@ header h1 {
 }
 
 .dupe-group {
-.dupe-group {
   margin-top: 1rem;
 }
 
