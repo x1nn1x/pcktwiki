@@ -1158,6 +1158,40 @@ export const useLichenStore = defineStore('lichen', () => {
     revisions.value = revisions.value.filter((item) => item.noteRef !== note.uri)
   }
 
+  /**
+   * Merge duplicate notes that share one slug: the survivor keeps its text and
+   * absorbs the others' content (each appended after a separator), and the
+   * remaining records are deleted with their revisions. Wikilinks need no
+   * rewriting — duplicates share the same slug, so links already point at the
+   * survivor's address.
+   */
+  async function mergeDuplicateNotes(
+    agent: Agent,
+    survivor: LichenNoteWithContent,
+    others: LichenNoteWithContent[],
+  ): Promise<{ deleted: number; appendedNotes: number }> {
+    assertCanEdit()
+    if (!others.length) throw new Error('No duplicate notes to merge')
+    if (others.some((other) => other.slug !== survivor.slug)) {
+      throw new Error('Duplicates must share the same slug')
+    }
+
+    let merged = survivor.content
+    let appendedNotes = 0
+    for (const other of others) {
+      if (!other.content.trim()) continue
+      merged += (merged.trim() ? '\n\n---\n\n' : '') + other.content
+      appendedNotes += 1
+    }
+    if (merged !== survivor.content) {
+      await saveNoteEdit(agent, survivor, survivor.title, merged, 'Merged duplicate pages')
+    }
+    for (const other of others) {
+      await removeNote(agent, other)
+    }
+    return { deleted: others.length, appendedNotes }
+  }
+
   function patchWikiInList(wiki: LichenWikiRecord): void {
     const index = wikis.value.findIndex((item) => item.uri === wiki.uri)
     if (index >= 0) {
@@ -2601,6 +2635,7 @@ export const useLichenStore = defineStore('lichen', () => {
     saveNoteEdit,
     acceptCurrentNoteContent,
     removeNote,
+    mergeDuplicateNotes,
     mergeBranchIntoParent,
     countMergeableRevisions,
     migrateBranchSlug,

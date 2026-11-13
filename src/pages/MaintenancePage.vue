@@ -5,7 +5,7 @@ import { loadWikiByHandle } from '@/lib/atproto/wiki-loader'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
 import { normalizeHandle } from '@/lib/config'
-import { computeMaintenanceReport } from '@/lib/lichen/maintenance'
+import { computeMaintenanceReport, type DuplicateSlug as DuplicateSlugGroup } from '@/lib/lichen/maintenance'
 import { canEdit } from '@/lib/lichen/collections'
 import type { LichenNoteWithContent } from '@/types/lichen'
 
@@ -30,6 +30,80 @@ const deleting = ref('')
 const deleteError = ref('')
 const migrating = ref('')
 const migrateError = ref('')
+
+/**
+ * Per-duplicate-group merge state: which record survives, and which strays
+ * have their text absorbed before deletion. Defaults pick the record with the
+ * most content (ties: the reachable one), and mark every non-empty stray for
+ * absorption so the obvious "keep the real page, drop the empty shells" path
+ * is a single click.
+ */
+interface MergeChoice {
+  survivor: string
+  absorb: Set<string>
+}
+const mergeChoices = ref<Record<string, MergeChoice>>({})
+const merging = ref('')
+const mergeError = ref('')
+const mergeDone = ref('')
+
+const characterCount = (note: LichenNoteWithContent) => note.content.trim().length
+
+function mergeChoiceFor(group: DuplicateSlugGroup): MergeChoice {
+  let choice = mergeChoices.value[group.slug]
+  if (!choice) {
+    const suggested =
+      [...group.notes].sort(
+        (a, b) =>
+          characterCount(b) - characterCount(a) ||
+          (b.uri === group.reachable.uri ? 1 : 0) - (a.uri === group.reachable.uri ? 1 : 0) ||
+          a.createdAt.localeCompare(b.createdAt),
+      )[0] ?? group.reachable
+    choice = {
+      survivor: suggested.uri,
+      absorb: new Set(
+        group.notes.filter((n) => n.uri !== suggested.uri && characterCount(n) > 0).map((n) => n.uri),
+      ),
+    }
+    mergeChoices.value = { ...mergeChoices.value, [group.slug]: choice }
+  }
+  return choice
+}
+
+async function mergeGroup(group: DuplicateSlugGroup) {
+  if (!auth.agent) return
+  const choice = mergeChoiceFor(group)
+  const survivor = group.notes.find((n) => n.uri === choice.survivor) ?? group.reachable
+  const others = group.notes.filter((n) => n.uri !== choice.survivor)
+  const absorbing = others.filter((n) => choice.absorb.has(n.uri))
+  const dropping = others.filter((n) => !choice.absorb.has(n.uri))
+
+  const plan = [
+    `Keep "${survivor.slug}" (${rkeyOf(survivor.uri)})${characterCount(survivor) ? ` — ${characterCount(survivor)} chars` : ', empty'}.`,
+    ...absorbing.map(
+      (n) => `Absorb "${rkeyOf(n.uri)}" — its ${characterCount(n)} chars are appended, then the record is deleted.`,
+    ),
+    ...dropping.map(
+      (n) => `Delete "${rkeyOf(n.uri)}" — empty${n.content.length ? `, ${n.content.length} chars discarded` : ''}.`,
+    ),
+  ]
+  const ok = window.confirm(`Merge the duplicate "${group.slug}" pages?\n\n${plan.join('\n')}`)
+  if (!ok) return
+
+  mergeError.value = ''
+  merging.value = group.slug
+  try {
+    const result = await lichen.mergeDuplicateNotes(auth.agent, survivor, others)
+    mergeDone.value = `Merged "${group.slug}" — kept 1, absorbed ${result.appendedNotes}, deleted ${result.deleted}.`
+    mergeChoices.value = Object.fromEntries(
+      Object.entries(mergeChoices.value).filter(([key]) => key !== group.slug),
+    )
+  } catch (err) {
+    mergeError.value = err instanceof Error ? err.message : 'Merge failed'
+  } finally {
+    merging.value = ''
+  }
+}
 
 /**
  * Branches written with the old `/` separator match no route, so they cannot be
@@ -107,30 +181,82 @@ watch(() => route.fullPath, load)
           size before deleting; anything written into a stranded record is lost with it.
         </p>
         <p v-if="deleteError" class="error-text">{{ deleteError }}</p>
+        <p v-if="mergeDone" class="muted merge-done">{{ mergeDone }}</p>
         <div v-for="group in report.duplicates" :key="group.slug" class="dupe-group">
           <h3 class="dupe-slug">{{ group.slug }} · {{ group.notes.length }} records</h3>
+          <p v-if="canEditWiki" class="muted dupe-help">
+            Pick the record to keep, tick any others whose text should be folded into it, then
+            merge. Merging rewrites the kept page once and deletes the rest with their
+            histories — links need no fixing, because duplicates share one address.
+          </p>
           <ul class="list">
-            <li v-for="note in group.notes" :key="note.uri">
+            <li
+              v-for="note in group.notes"
+              :key="note.uri"
+              class="dupe-row"
+              :class="{ 'dupe-row-survivor': mergeChoiceFor(group).survivor === note.uri }"
+            >
+              <label
+                v-if="canEditWiki"
+                class="dupe-radio"
+                :title="mergeChoiceFor(group).survivor === note.uri ? 'This record is kept' : 'Keep this record'"
+              >
+                <input
+                  type="radio"
+                  :name="`survivor-${group.slug}`"
+                  :checked="mergeChoiceFor(group).survivor === note.uri"
+                  @change="mergeChoiceFor(group).survivor = note.uri"
+                />
+                <span>keep</span>
+              </label>
               <div class="dupe-meta">
                 <code>{{ rkeyOf(note.uri) }}</code>
                 <span class="muted">
                   {{ note.content.length }} chars ·
                   {{ new Date(note.createdAt).toLocaleString() }}
                 </span>
+                <span v-if="note.uri === group.reachable.uri" class="badge">reachable</span>
+                <span v-if="!note.content.trim()" class="badge badge-empty">empty</span>
               </div>
-              <span v-if="note.uri === group.reachable.uri" class="badge">reachable</span>
+              <label
+                v-if="canEditWiki && mergeChoiceFor(group).survivor !== note.uri"
+                class="dupe-absorb"
+                :title="characterCount(note) ? 'Fold this text into the kept page before deleting' : 'Nothing to fold in — it will just be deleted'"
+              >
+                <input
+                  type="checkbox"
+                  :disabled="!characterCount(note)"
+                  :checked="mergeChoiceFor(group).absorb.has(note.uri)"
+                  @change="
+                    ($event.target as HTMLInputElement).checked
+                      ? mergeChoiceFor(group).absorb.add(note.uri)
+                      : mergeChoiceFor(group).absorb.delete(note.uri)
+                  "
+                />
+                <span>merge text</span>
+              </label>
               <button
-                v-else-if="canEditWiki"
+                v-if="canEditWiki && mergeChoiceFor(group).survivor !== note.uri"
                 type="button"
-                class="btn btn-secondary btn-sm"
+                class="btn btn-ghost btn-sm"
                 :disabled="deleting === note.uri"
                 @click="deleteRecord(note, 'duplicate')"
               >
                 {{ deleting === note.uri ? 'Deleting…' : 'Delete' }}
               </button>
-              <span v-else class="muted">stranded</span>
+              <span v-if="!canEditWiki" class="muted">stranded</span>
             </li>
           </ul>
+          <button
+            v-if="canEditWiki"
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="merging === group.slug"
+            @click="mergeGroup(group)"
+          >
+            {{ merging === group.slug ? 'Merging…' : 'Merge & clean up' }}
+          </button>
+          <p v-if="mergeError" class="error-text">{{ mergeError }}</p>
         </div>
       </section>
 
@@ -279,7 +405,55 @@ header h1 {
   border-bottom: 1px solid var(--pckt-border);
 }
 
-.dupe-group + .dupe-group {
+.dupe-group + .dupe-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+}
+
+.dupe-row-survivor {
+  background: color-mix(in srgb, var(--pckt-accent, var(--pckt-red)) 6%, transparent);
+}
+
+.dupe-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--pckt-text-muted);
+  cursor: pointer;
+}
+
+.dupe-absorb {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--pckt-text-muted);
+  cursor: pointer;
+}
+
+.dupe-absorb input:disabled {
+  opacity: 0.4;
+}
+
+.badge-empty {
+  color: var(--pckt-text-muted);
+  border: 1px solid var(--pckt-border);
+}
+
+.merge-done {
+  font-size: 0.875rem;
+}
+
+.dupe-help {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.dupe-group {
+.dupe-group {
   margin-top: 1rem;
 }
 
