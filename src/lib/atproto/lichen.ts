@@ -299,7 +299,10 @@ export async function listRecentRevisions(
     }
   }
 
-  return { records, complete: exhausted || records.length < max }
+  // `complete` means every revision record was fetched. Anchored early-stops
+  // are correct for rendering but leave older history on the PDS, so callers
+  // wanting deep history still run ensureFullHistory().
+  return { records, complete: exhausted }
 }
 
 export async function listMemberships(agent: Agent, did: string): Promise<LichenMembershipRecord[]> {

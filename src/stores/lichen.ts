@@ -1769,6 +1769,47 @@ export const useLichenStore = defineStore('lichen', () => {
   }
 
   /**
+   * Permanently purge a page's edit history: every revision record is deleted
+   * from the PDS and replaced with a single fresh revision holding only the
+   * current text. The changelog is gone — diffs that contained removed text
+   * no longer exist anywhere in the repo. Owner-only; irreversible.
+   */
+  async function purgeNoteHistory(agent: Agent, note: LichenNoteWithContent): Promise<void> {
+    const wiki = currentWiki.value
+    if (!wiki) throw new Error('No wiki selected')
+    if (wiki.ownerDid !== agent.accountDid) {
+      throw new Error('Only the wiki owner can purge history')
+    }
+    const revisionUris = revisions.value
+      .filter((item) => item.noteRef === note.uri)
+      .map((item) => item.uri)
+    // Delete every existing revision first — if any delete fails, stop before
+    // writing the replacement so the note never loses its real history chain.
+    await deleteNoteWithRevisionsPartial(agent, revisionUris, wiki.ownerDid)
+    await writeRevisionRecord(
+      agent,
+      note.uri,
+      '',
+      note.content,
+      null,
+      'History purged — current text only',
+      undefined,
+      wiki.ownerDid,
+      true, // full snapshot; this is the only revision that exists now
+    )
+    revisions.value = revisions.value.filter((item) => item.noteRef !== note.uri)
+    const fresh = await listRevisions(agent, wiki.ownerDid)
+    revisions.value = fresh.filter(
+      (item) => item.noteRef === note.uri && !revisionUris.includes(item.uri),
+    )
+    const contents = buildNoteContents(revisions.value)
+    notes.value = attachContentToNotes(
+      notes.value.map(({ content: _c, latestRevisionUri: _l, ...record }) => record),
+      contents,
+    )
+  }
+
+  /**
    * Hide (or restore) a Bluesky post on this wiki's forum — the owner/mod
    * moderation action. The post itself stays in its author's repo; the wiki's
    * policy record carries the hidden list every visitor reads.
@@ -1793,6 +1834,27 @@ export const useLichenStore = defineStore('lichen', () => {
       forumMods: existing.forumMods,
       forumHiddenPosts: [...set],
     })
+  }
+
+  async function deleteNoteWithRevisionsPartial(
+    agent: Agent,
+    revisionUris: string[],
+    repoDid: string,
+  ): Promise<void> {
+    const writes = []
+    for (const uri of revisionUris) {
+      const parsed = parseAtUri(uri)
+      if (parsed) {
+        writes.push({
+          $type: 'com.atproto.repo.applyWrites#delete' as const,
+          collection: 'wiki.lichen.noteRevision',
+          rkey: parsed.rkey,
+        })
+      }
+    }
+    for (let i = 0; i < writes.length; i += 200) {
+      await agent.com.atproto.repo.applyWrites({ repo: repoDid, writes: writes.slice(i, i + 200) })
+    }
   }
 
   async function addPageGrant(
@@ -2486,6 +2548,7 @@ export const useLichenStore = defineStore('lichen', () => {
     removeMember,
     setWikiPolicy,
     setForumPostHidden,
+    purgeNoteHistory,
     addPageGrant,
     removePageGrant,
     addApprovedMedia,

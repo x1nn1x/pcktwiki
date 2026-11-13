@@ -42,6 +42,34 @@ watch(() => route.fullPath, load)
 
 const note = computed(() => lichen.getNoteBySlug(noteSlug.value))
 const history = computed(() => (note.value ? lichen.getHistory(note.value.uri) : []))
+
+const isOwner = computed(
+  () => !!auth.did && !!lichen.currentWiki && lichen.currentWiki.ownerDid === auth.did,
+)
+const purgeArmed = ref(false)
+const purgeConfirmText = ref('')
+const purging = ref(false)
+const purgeError = ref('')
+const purgeDone = ref(false)
+const canPurge = computed(() => isOwner.value && (history.value.length > 1 || purgeDone.value))
+
+async function purgeHistory() {
+  if (!auth.agent || !note.value || !purgeArmed.value || purging.value) return
+  purging.value = true
+  purgeError.value = ''
+  try {
+    await lichen.purgeNoteHistory(auth.agent, note.value)
+    purgeArmed.value = false
+    purgeConfirmText.value = ''
+    purgeDone.value = true
+    // Reload the (now single-revision) history.
+    await load()
+  } catch (err) {
+    purgeError.value = err instanceof Error ? err.message : 'Could not purge history'
+  } finally {
+    purging.value = false
+  }
+}
 const canRestore = computed(() => canEdit(lichen.access) && !!auth.agent)
 
 const damagedUriSet = computed(() => new Set(note.value?.damagedRevisionUris ?? []))
@@ -170,6 +198,58 @@ async function restoreSelected() {
         <h1>Revision history</h1>
         <p class="muted">{{ note?.title }}</p>
       </header>
+
+      <section v-if="isOwner" class="purge-zone card">
+        <h2>Purge edit history</h2>
+        <p class="muted purge-warning">
+          Permanently deletes every revision of this page from your PDS and keeps only the
+          current text as a single fresh revision. The changelog — including any removed text —
+          becomes unreadable to everyone, including via lichen.wiki. This cannot be undone:
+          export a backup first if you might want the history. Note that third-party services
+          that already fetched these records may have retained copies.
+        </p>
+        <p v-if="!purgeDone && canPurge" class="muted purge-count">
+          {{ history.length }} revision{{ history.length === 1 ? '' : 's' }} will be permanently deleted.
+        </p>
+        <p v-if="purgeDone" class="muted">History purged — this page now has a single clean revision.</p>
+        <button
+          v-if="!purgeArmed && canPurge"
+          type="button"
+          class="btn btn-danger-outline btn-sm"
+          @click="purgeArmed = true"
+        >
+          Purge edit history…
+        </button>
+        <div v-if="purgeArmed" class="purge-confirm">
+          <input
+            v-model="purgeConfirmText"
+            class="input"
+            type="text"
+            :placeholder="`Type PURGE to confirm`"
+            :disabled="purging"
+            aria-label="Type PURGE to confirm"
+          />
+          <div class="purge-actions">
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              :disabled="purging"
+              @click="purgeArmed = false"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger btn-sm"
+              :disabled="purging || purgeConfirmText.trim().toUpperCase() !== 'PURGE'"
+              @click="purgeHistory"
+            >
+              {{ purging ? 'Purging…' : 'Delete all revisions permanently' }}
+            </button>
+          </div>
+        </div>
+        <p v-if="purgeError" class="error-text">{{ purgeError }}</p>
+      </section>
 
       <div
         v-if="note && damagedInHistory.length"
@@ -455,4 +535,45 @@ header h1 {
 .error-text {
   margin: 0 0 0.75rem;
 }
+
+.purge-zone {
+  padding: 1rem 1.25rem;
+  border-color: color-mix(in srgb, var(--pckt-danger) 35%, var(--pckt-border));
+}
+
+.purge-zone h2 {
+  margin: 0 0 0.375rem;
+  font-size: 1rem;
+  color: var(--pckt-danger);
+}
+
+.purge-warning {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.purge-count {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.purge-confirm {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 26rem;
+}
+
+.purge-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.btn-danger {
+  border-color: color-mix(in srgb, var(--pckt-danger) 55%, transparent);
+  background: var(--pckt-danger);
+  color: #fff;
+}
+
 </style>
