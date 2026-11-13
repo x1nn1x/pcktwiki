@@ -46,6 +46,48 @@ const history = computed(() => (note.value ? lichen.getHistory(note.value.uri) :
 const isOwner = computed(
   () => !!auth.did && !!lichen.currentWiki && lichen.currentWiki.ownerDid === auth.did,
 )
+const eraseText = ref('')
+const eraseReplacement = ref('')
+const eraseFindings = ref<{ revisionsAffected: number; occurrencesInCurrent: number } | null>(null)
+const eraseArmed = ref(false)
+const erasing = ref(false)
+const eraseError = ref('')
+const eraseDone = ref('')
+
+function findEraseText() {
+  eraseError.value = ''
+  if (!note.value || !eraseText.value.trim()) return
+  eraseFindings.value = lichen.findTextInHistory(note.value.uri, eraseText.value)
+  eraseArmed.value = false
+  if (eraseFindings.value.revisionsAffected === 0 && eraseFindings.value.occurrencesInCurrent === 0) {
+    eraseError.value = 'That exact text does not appear in this page\u2019s history or current content.'
+  }
+}
+
+async function eraseFromHistory() {
+  if (!auth.agent || !note.value || !eraseArmed.value || erasing.value) return
+  erasing.value = true
+  eraseError.value = ''
+  try {
+    const written = await lichen.redactTextFromHistory(
+      auth.agent,
+      note.value,
+      eraseText.value,
+      eraseReplacement.value,
+    )
+    eraseDone.value = `Erased from ${written} revision${written === 1 ? '' : 's'} — the text no longer exists in this page's saved history.`
+    eraseText.value = ''
+    eraseReplacement.value = ''
+    eraseFindings.value = null
+    eraseArmed.value = false
+    await load()
+  } catch (err) {
+    eraseError.value = err instanceof Error ? err.message : 'Could not erase the text'
+  } finally {
+    erasing.value = false
+  }
+}
+
 const purgeArmed = ref(false)
 const purgeConfirmText = ref('')
 const purging = ref(false)
@@ -199,8 +241,78 @@ async function restoreSelected() {
         <p class="muted">{{ note?.title }}</p>
       </header>
 
+      <section v-if="isOwner" class="erase-zone card">
+        <h2>Erase text from history</h2>
+        <p class="muted purge-warning">
+          Permanently removes an exact piece of text from every saved revision of this page —
+          diffs, snapshots, and edit messages — while keeping the rest of the changelog intact.
+          The text is rewritten out of the records on your PDS, so no app can reconstruct it.
+          Exact match, case-sensitive.
+        </p>
+        <div class="erase-form">
+          <input
+            v-model="eraseText"
+            class="input"
+            type="text"
+            placeholder="Exact text to erase"
+            :disabled="erasing"
+            aria-label="Text to erase"
+          />
+          <input
+            v-model="eraseReplacement"
+            class="input"
+            type="text"
+            placeholder="Replace with (optional — blank removes it)"
+            :disabled="erasing"
+            aria-label="Replacement text"
+          />
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            :disabled="!eraseText.trim() || erasing"
+            @click="findEraseText"
+          >
+            Find occurrences
+          </button>
+        </div>
+        <p v-if="eraseFindings" class="muted erase-findings">
+          Found in {{ eraseFindings.revisionsAffected }} saved revision{{
+            eraseFindings.revisionsAffected === 1 ? '' : 's'
+          }}<template v-if="eraseFindings.occurrencesInCurrent">
+            and {{ eraseFindings.occurrencesInCurrent }} place{{
+              eraseFindings.occurrencesInCurrent === 1 ? '' : 's'
+            }}
+            on the current page</template
+          >. Erasing rewrites those records permanently.
+        </p>
+        <div v-if="eraseFindings" class="erase-actions">
+          <label class="erase-confirm-label">
+            <input v-model="eraseArmed" type="checkbox" />
+            <span>I understand this permanently rewrites the saved history.</span>
+          </label>
+          <button
+            type="button"
+            class="btn btn-danger btn-sm"
+            :disabled="!eraseArmed || erasing"
+            @click="eraseFromHistory"
+          >
+            {{ erasing ? 'Erasing…' : 'Erase permanently' }}
+          </button>
+        </div>
+        <p v-if="eraseDone" class="muted erase-done">{{ eraseDone }}</p>
+        <p v-if="eraseError" class="error-text">{{ eraseError }}</p>
+      </section>
+
       <section v-if="isOwner" class="purge-zone card">
         <h2>Purge edit history</h2>
+        <p class="muted purge-warning">
+          The nuclear option — deletes
+          <strong>every</strong> revision of this page from your PDS and keeps only the current
+          text as a single fresh revision. Use the erase tool above to remove specific text
+          instead; purging throws away the whole changelog. This cannot be undone: export a
+          backup first if you might want the history. Note that third-party services that
+          already fetched these records may have retained copies.
+        </p>
         <p class="muted purge-warning">
           Permanently deletes every revision of this page from your PDS and keeps only the
           current text as a single fresh revision. The changelog — including any removed text —
@@ -212,6 +324,10 @@ async function restoreSelected() {
           {{ history.length }} revision{{ history.length === 1 ? '' : 's' }} will be permanently deleted.
         </p>
         <p v-if="purgeDone" class="muted">History purged — this page now has a single clean revision.</p>
+        <p class="muted purge-warning">
+          To remove a specific passage instead of everything, use
+          <strong>Erase text from history</strong> above.
+        </p>
         <button
           v-if="!purgeArmed && canPurge"
           type="button"
@@ -536,6 +652,48 @@ header h1 {
   margin: 0 0 0.75rem;
 }
 
+.erase-zone {
+  padding: 1rem 1.25rem;
+  border-color: color-mix(in srgb, var(--pckt-accent, var(--pckt-red)) 30%, var(--pckt-border));
+}
+
+.erase-zone h2 {
+  margin: 0 0 0.375rem;
+  font-size: 1rem;
+}
+
+.erase-zone > p {
+  margin: 0 0 0.5rem;
+}
+
+.erase-form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 30rem;
+}
+
+.erase-findings {
+  font-size: 0.875rem;
+}
+
+.erase-actions {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+
+.erase-confirm-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.erase-done {
+  font-size: 0.875rem;
+}
+
+.purge-zone {
 .purge-zone {
   padding: 1rem 1.25rem;
   border-color: color-mix(in srgb, var(--pckt-danger) 35%, var(--pckt-border));

@@ -148,6 +148,7 @@ import {
   rejectSuggestionLocally,
   rewriteBlobCid,
 } from '@/lib/lichen/suggestions-remote'
+import { planTextRedaction } from '@/lib/lichen/redact'
 import type { PublicWikiCacheEntry } from '@/lib/lichen/load-public-wiki'
 import type {
   ActorProfile,
@@ -1810,6 +1811,80 @@ export const useLichenStore = defineStore('lichen', () => {
   }
 
   /**
+   * Count where a piece of text appears in a page's saved history (diffs,
+   * snapshots, messages, and the current text). Read-only — powers the
+   * redaction preview on the History page.
+   */
+  function findTextInHistory(noteUri: string, searchText: string): {
+    revisionsAffected: number
+    occurrencesInCurrent: number
+  } {
+    const noteRevisions = revisions.value.filter((item) => item.noteRef === noteUri)
+    if (!searchText.trim()) return { revisionsAffected: 0, occurrencesInCurrent: 0 }
+    const plan = planTextRedaction(noteRevisions, searchText, '')
+    const current = notes.value.find((item) => item.uri === noteUri)
+    const occurrencesInCurrent = current
+      ? current.content.split(searchText).length - 1
+      : 0
+    return { revisionsAffected: plan.revisionsAffected, occurrencesInCurrent }
+  }
+
+  /**
+   * Erase a piece of text from a page's entire saved history. Every revision
+   * record that carries the text (diff, snapshot, or edit message) is
+   * rewritten in place at its own rkey and timestamp with the text replaced —
+   * the changelog survives, but the text was never there. If the text is in
+   * the current page too, it is removed there as part of the rewrite.
+   */
+  async function redactTextFromHistory(
+    agent: Agent,
+    note: LichenNoteWithContent,
+    searchText: string,
+    replaceText: string,
+  ): Promise<number> {
+    const wiki = currentWiki.value
+    if (!wiki) throw new Error('No wiki selected')
+    if (wiki.ownerDid !== agent.accountDid) {
+      throw new Error('Only the wiki owner can erase text from history')
+    }
+    if (!searchText.trim()) throw new Error('Enter the exact text to erase')
+
+    const noteRevisions = revisions.value.filter((item) => item.noteRef === note.uri)
+    const plan = planTextRedaction(noteRevisions, searchText, replaceText)
+    let written = 0
+    for (const item of plan.changedItems) {
+      const parsed = parseAtUri(item.uri)
+      if (!parsed) continue
+      await agent.com.atproto.repo.putRecord({
+        repo: wiki.ownerDid,
+        collection: 'wiki.lichen.noteRevision',
+        rkey: parsed.rkey,
+        record: item.record,
+      })
+      written += 1
+    }
+
+    // Rebuild local state from the redacted chain.
+    revisions.value = revisions.value.map((item) => {
+      const planned = plan.items.find((p) => p.uri === item.uri)
+      if (!planned || !planned.changed) return item
+      const record = planned.record
+      return {
+        ...item,
+        diff: String(record.diff ?? ''),
+        message: record.message as string | undefined,
+        snapshot: record.snapshot as string | undefined,
+      }
+    })
+    const contents = buildNoteContents(revisions.value)
+    notes.value = attachContentToNotes(
+      notes.value.map(({ content: _c, latestRevisionUri: _l, ...record }) => record),
+      contents,
+    )
+    return written
+  }
+
+  /**
    * Hide (or restore) a Bluesky post on this wiki's forum — the owner/mod
    * moderation action. The post itself stays in its author's repo; the wiki's
    * policy record carries the hidden list every visitor reads.
@@ -2549,6 +2624,8 @@ export const useLichenStore = defineStore('lichen', () => {
     setWikiPolicy,
     setForumPostHidden,
     purgeNoteHistory,
+    findTextInHistory,
+    redactTextFromHistory,
     addPageGrant,
     removePageGrant,
     addApprovedMedia,

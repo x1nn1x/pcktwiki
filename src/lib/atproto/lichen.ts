@@ -230,6 +230,9 @@ export async function listRevisions(agent: Agent, did: string): Promise<LichenRe
     message: value.message as string | undefined,
     snapshot: typeof value.snapshot === 'string' ? value.snapshot : undefined,
     createdAt: String(value.createdAt ?? new Date().toISOString()),
+    blobs: Array.isArray(value.blobs)
+      ? (value.blobs as Array<Record<string, unknown>>)
+      : undefined,
   }))
 }
 

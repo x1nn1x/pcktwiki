@@ -154,7 +154,7 @@ export function buildNoteContents(
   return result
 }
 
-function orderRevisions(revisions: LichenRevisionRecord[]): LichenRevisionRecord[] {
+export function orderRevisions(revisions: LichenRevisionRecord[]): LichenRevisionRecord[] {
   const byUri = new Map(revisions.map((revision) => [revision.uri, revision]))
   const roots = revisions.filter((revision) => !revision.parentRevision)
   if (roots.length === 0) {

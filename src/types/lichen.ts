@@ -194,6 +194,8 @@ export interface LichenRevisionRecord {
   diffFormat: string
   message?: string
   createdAt: string
+  /** Blobs referenced by this revision's content (kept so getBlob works). */
+  blobs?: Array<Record<string, unknown>>
 }
 
 export interface LichenMembershipRecord {
