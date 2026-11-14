@@ -45,6 +45,9 @@ export async function listPolicies(agent: Agent, did: string): Promise<LichenPol
     forumHiddenPosts: Array.isArray(value.forumHiddenPosts)
       ? value.forumHiddenPosts.filter((p): p is string => typeof p === 'string')
       : undefined,
+    archivedSlugs: Array.isArray(value.archivedSlugs)
+      ? value.archivedSlugs.filter((p): p is string => typeof p === 'string')
+      : undefined,
   }))
 }
 
@@ -57,6 +60,7 @@ export interface PolicyFields {
   forumThreads?: LichenPolicyRecord['forumThreads']
   forumMods?: string[]
   forumHiddenPosts?: string[]
+  archivedSlugs?: string[]
 }
 
 export async function writePolicyRecord(
@@ -83,6 +87,9 @@ export async function writePolicyRecord(
     ...(fields.forumMods !== undefined ? { forumMods: [...fields.forumMods] } : {}),
     ...(fields.forumHiddenPosts !== undefined
       ? { forumHiddenPosts: [...fields.forumHiddenPosts] }
+      : {}),
+    ...(fields.archivedSlugs !== undefined
+      ? { archivedSlugs: [...fields.archivedSlugs] }
       : {}),
   })
 

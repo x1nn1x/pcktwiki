@@ -126,6 +126,46 @@ function siteConfigPlugin(): Plugin {
   }
 }
 
+/**
+ * Dev-only: point identity resolution at a local mock PDS so a local preview
+ * can serve draft records. Enabled by setting VITE_DEV_MOCK_PDS to the mock's
+ * base URL (e.g. http://127.0.0.1:8790). Everything the app reads (wiki, notes,
+ * revisions, blobs) then comes from that server; only the two identity hops —
+ * handle → DID (public.api.bsky.app) and DID → PDS (plc.directory) — need
+ * redirecting, which this injected bootstrap does.
+ */
+function mockPdsPlugin(): Plugin {
+  const mockUrl = siteEnv.VITE_DEV_MOCK_PDS?.trim()
+  if (!mockUrl) return { name: 'mock-pds-disabled' }
+
+  return {
+    name: 'mock-pds',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        const bootstrap = `<script>(function () {
+  var MOCK = ${JSON.stringify(mockUrl)}
+  var orig = window.fetch.bind(window)
+  window.fetch = function (input, init) {
+    try {
+      var url = typeof input === 'string' ? input : (input && input.url) || ''
+      if (url.indexOf('https://plc.directory/') === 0) {
+        return orig(MOCK + '/did.json', init)
+      }
+      if (url.indexOf('com.atproto.identity.resolveHandle') !== -1) {
+        return orig(MOCK + url.replace(/^https?:\\/\\/[^/]+/, ''), init)
+      }
+    } catch (e) {}
+    return orig(input, init)
+  }
+  console.info('[mock-pds] dev reads served from ' + MOCK)
+})()</script>`
+        return html.replace('<head>', '<head>\n    ' + bootstrap)
+      },
+    },
+  }
+}
+
 function guestFeedSnapshotPlugin(): Plugin {
   let root = process.cwd()
 
@@ -225,6 +265,7 @@ export default defineConfig({
   plugins: [
     vue(),
     siteConfigPlugin(),
+    mockPdsPlugin(),
     guestFeedSnapshotPlugin(),
     VitePWA({
       devOptions: {

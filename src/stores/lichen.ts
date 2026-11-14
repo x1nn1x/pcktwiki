@@ -170,6 +170,9 @@ export const useLichenStore = defineStore('lichen', () => {
   const wikis = ref<LichenWikiRecord[]>([])
   const currentWiki = ref<LichenWikiRecord | null>(null)
   const notes = ref<LichenNoteWithContent[]>([])
+  /** Notes hidden via the archive — kept out of `notes` everywhere. */
+  const archivedNotes = ref<LichenNoteWithContent[]>([])
+
   const revisions = ref<LichenRevisionRecord[]>([])
   const memberships = ref<LichenMembershipRecord[]>([])
   const profile = ref<ActorProfile | null>(null)
@@ -448,14 +451,103 @@ export const useLichenStore = defineStore('lichen', () => {
   ): void {
     currentWiki.value = cacheHit.wiki
     revisions.value = cacheHit.revisionRecords
-    notes.value = attachContentToNotes(
+    const rebuilt = attachContentToNotes(
       cacheHit.noteRecords,
       buildNoteContents(cacheHit.revisionRecords),
     )
+    partitionArchived(rebuilt)
     cachedFrom.value = cacheHit.fetchedAt
     if (handle) {
       ownerHandle.value = handle
     }
+  }
+
+  /**
+   * Archive a page: flips it hidden immediately (removed from navigation,
+   * search, and direct URLs) by listing its slug in the wiki's policy record.
+   * The record and history stay in the repo until permanently deleted from
+   * the archive.
+   */
+  async function archiveNote(agent: Agent, note: LichenNoteWithContent): Promise<void> {
+    const wiki = currentWiki.value
+    if (!wiki) throw new Error('No wiki selected')
+    const existing = resolveWikiPolicy(policyRecord.value)
+    if (!existing.archivedSlugs.includes(note.slug)) {
+      await setWikiPolicy(agent, {
+        editAccess: existing.editAccess,
+        suggestionsEnabled: existing.suggestionsEnabled,
+        imageMode: existing.imageMode,
+        imageSubmissions: existing.imageSubmissions,
+        forumEnabled: existing.forumEnabled,
+        forumThreads: existing.forumThreads,
+        forumMods: existing.forumMods,
+        forumHiddenPosts: existing.forumHiddenPosts,
+        archivedSlugs: [...existing.archivedSlugs, note.slug],
+      })
+    }
+    notes.value = notes.value.filter((item) => item.uri !== note.uri)
+    archivedNotes.value = [...archivedNotes.value, note]
+  }
+
+  /** Bring an archived page back — visible everywhere again. */
+  async function unarchiveNote(agent: Agent, note: LichenNoteWithContent): Promise<void> {
+    const wiki = currentWiki.value
+    if (!wiki) throw new Error('No wiki selected')
+    const existing = resolveWikiPolicy(policyRecord.value)
+    if (existing.archivedSlugs.includes(note.slug)) {
+      await setWikiPolicy(agent, {
+        editAccess: existing.editAccess,
+        suggestionsEnabled: existing.suggestionsEnabled,
+        imageMode: existing.imageMode,
+        imageSubmissions: existing.imageSubmissions,
+        forumEnabled: existing.forumEnabled,
+        forumThreads: existing.forumThreads,
+        forumMods: existing.forumMods,
+        forumHiddenPosts: existing.forumHiddenPosts,
+        archivedSlugs: existing.archivedSlugs.filter((slug) => slug !== note.slug),
+      })
+    }
+    archivedNotes.value = archivedNotes.value.filter((item) => item.uri !== note.uri)
+    notes.value = [...notes.value, note]
+    // The archived window may have skipped this note's older revisions —
+    // pull the full chain so its content replays completely.
+    fullHistoryLoaded.value = false
+    await ensureFullHistory(agent)
+  }
+
+  /**
+   * Permanently delete an archived page from the PDS: the note record and
+   * every revision record are removed. Irreversible.
+   */
+  async function permanentlyDeleteArchivedNote(
+    agent: Agent,
+    note: LichenNoteWithContent,
+  ): Promise<void> {
+    const wiki = currentWiki.value
+    if (!wiki) throw new Error('No wiki selected')
+    const all = await listRevisions(agent, wiki.ownerDid)
+    const revisionUris = all
+      .filter((item) => item.noteRef === note.uri)
+      .map((item) => item.uri)
+    await deleteNoteWithRevisionsPartial(agent, revisionUris, wiki.ownerDid)
+    archivedNotes.value = archivedNotes.value.filter((item) => item.uri !== note.uri)
+    revisions.value = revisions.value.filter((item) => item.noteRef !== note.uri)
+  }
+
+  /**
+   * Split a freshly loaded note list into visible vs archived, using the
+   * policy record when it is already known. The archived half goes to
+   * `archivedNotes` so the archive UI can restore or permanently delete it.
+   */
+  function partitionArchived(records: LichenNoteWithContent[]): void {
+    const archived = resolveWikiPolicy(policyRecord.value).archivedSlugs
+    const visible: LichenNoteWithContent[] = []
+    const hidden: LichenNoteWithContent[] = []
+    for (const note of records) {
+      (archived.includes(note.slug) ? hidden : visible).push(note)
+    }
+    notes.value = visible
+    archivedNotes.value = hidden
   }
 
   async function tryOfflineCache(
@@ -506,6 +598,8 @@ export const useLichenStore = defineStore('lichen', () => {
      * cache paint (stale-while-revalidate), so a repeat visit paints instantly
      * and then quietly catches up with the PDS.
      */
+    let pendingNotes: LichenNoteWithContent[] | null = null
+
     const fetchAndApply = async (): Promise<void> => {
       const profileAgent = getPublicAgent()
       const cached =
@@ -598,7 +692,7 @@ export const useLichenStore = defineStore('lichen', () => {
         fullHistoryLoaded.value = revisionResult.complete
 
         const contents = buildNoteContents(revisions.value)
-        notes.value = attachContentToNotes(filteredNotes, contents)
+        pendingNotes = attachContentToNotes(filteredNotes, contents)
         cachedFrom.value = null
 
         if (handle) {
@@ -625,6 +719,8 @@ export const useLichenStore = defineStore('lichen', () => {
       memberships.value = membershipRecords
       policyRecord.value =
         policyRecords.find((item: LichenPolicyRecord) => item.wikiRef === wiki.uri) ?? null
+      if (pendingNotes) partitionArchived(pendingNotes)
+      pendingNotes = null
       pageGrants.value = grantRecords.filter(
         (item: LichenPageGrantRecord) => item.wikiRef === wiki.uri,
       )
@@ -936,6 +1032,8 @@ export const useLichenStore = defineStore('lichen', () => {
      * pass true when an empty state is the point.
      */
     allowBlank = false,
+    /** Delete every prior revision after this save — purge-on-save. */
+    purgeHistory = false,
   ): Promise<void> {
     assertCanEdit()
     if (!allowBlank && !content.trim() && oldContent.trim()) {
@@ -974,6 +1072,22 @@ export const useLichenStore = defineStore('lichen', () => {
       // incomplete-rebuild warning until the next full replay.
       clearNoteDamage(note)
       persistCurrentWikiContentCache()
+
+      // Purge-on-save: the fresh revision above is the only history that
+      // remains. Prior revision records are deleted from the PDS.
+      if (purgeHistory) {
+        const stale = revisions.value.filter(
+          (item) => item.noteRef === note.uri && item.uri !== revision.uri,
+        )
+        await deleteNoteWithRevisionsPartial(
+          agent,
+          stale.map((item) => item.uri),
+          wikiRepoDid(),
+        )
+        revisions.value = revisions.value.filter(
+          (item) => item.noteRef !== note.uri || item.uri === revision.uri,
+        )
+      }
     } catch (err) {
       error.value = toUserFacingNetworkError(err)
       throw err
@@ -2453,6 +2567,7 @@ export const useLichenStore = defineStore('lichen', () => {
     handle?: string,
     wikiSlug?: string,
     blobs?: Array<Record<string, unknown>>,
+    purgeHistory = false,
   ): Promise<'saved' | 'queued'> {
     // Only the owner's session can write to the wiki's repo. Every other
     // contributor — members included — files a suggestion on their own repo
@@ -2513,6 +2628,8 @@ export const useLichenStore = defineStore('lichen', () => {
       note.content,
       false,
       blobs,
+      false,
+      purgeHistory,
     )
     return 'saved'
   }
@@ -2562,6 +2679,7 @@ export const useLichenStore = defineStore('lichen', () => {
     wikis.value = []
     currentWiki.value = null
     notes.value = []
+    archivedNotes.value = []
     revisions.value = []
     fullHistoryLoaded.value = false
     fullHistoryLoading.value = false
@@ -2602,6 +2720,7 @@ export const useLichenStore = defineStore('lichen', () => {
     currentWiki,
     activeWikiScope,
     notes,
+    archivedNotes,
     revisions,
     memberships,
     policyRecord,
@@ -2636,6 +2755,9 @@ export const useLichenStore = defineStore('lichen', () => {
     acceptCurrentNoteContent,
     removeNote,
     mergeDuplicateNotes,
+    archiveNote,
+    unarchiveNote,
+    permanentlyDeleteArchivedNote,
     mergeBranchIntoParent,
     countMergeableRevisions,
     migrateBranchSlug,

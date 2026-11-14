@@ -109,6 +109,22 @@ function shareBluesky() {
 const menuRef = ref<HTMLElement | null>(null)
 const menuOpen = ref(false)
 
+/** Archive the current page: hides it at once; restore from Maintenance. */
+async function archivePage() {
+  const title = props.note.title
+  const ok = window.confirm(
+    `Archive "${title}"? It is hidden from the wiki immediately and can be restored or permanently deleted from the wiki's Maintenance page.`,
+  )
+  if (!ok) return
+  try {
+    await lichen.archiveNote(auth.agent!, props.note)
+    closeMenu()
+    router.push(`/@${props.ownerHandle}/${props.wikiSlug}`)
+  } catch (err) {
+    window.alert(err instanceof Error ? err.message : 'Could not archive the page')
+  }
+}
+
 function closeMenu() {
   menuOpen.value = false
 }
@@ -302,6 +318,16 @@ defineExpose({
           <span class="tools-caret" aria-hidden="true">▾</span>
         </button>
         <div v-if="menuOpen" class="tools-menu" role="menu">
+          <button
+            v-if="canEdit"
+            type="button"
+            class="tools-item"
+            role="menuitem"
+            title="Hide this page immediately — restore from Maintenance"
+            @click="archivePage"
+          >
+            Archive page
+          </button>
           <RouterLink
             v-if="canEdit"
             :to="`/@${ownerHandle}/${wikiSlug}/edit/${note.slug}`"

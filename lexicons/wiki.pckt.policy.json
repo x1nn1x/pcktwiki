@@ -81,6 +81,15 @@
 							"maxLength": 2048
 						},
 						"description": "AT-URIs of Bluesky posts hidden from this wiki's forum by the owner or mods, whole threads (root post) or single replies."
+					},
+					"archivedSlugs": {
+						"type": "array",
+						"maxLength": 200,
+						"items": {
+							"type": "string",
+							"maxLength": 256
+						},
+						"description": "Slugs of notes archived (hidden) on this wiki. Archived pages are removed from navigation, search, and direct URLs, but their records and history stay in the repo until permanently deleted from the archive."
 					}
 				}
 			}

@@ -35,6 +35,8 @@ export interface LichenPolicyRecord {
   forumMods?: string[]
   /** AT-URIs of posts hidden from this wiki's forum. */
   forumHiddenPosts?: string[]
+  /** Slugs of notes archived (hidden) on this wiki. */
+  archivedSlugs?: string[]
 }
 
 export interface LichenPageGrantRecord {

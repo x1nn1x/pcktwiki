@@ -88,30 +88,6 @@ async function eraseFromHistory() {
   }
 }
 
-const purgeArmed = ref(false)
-const purgeConfirmText = ref('')
-const purging = ref(false)
-const purgeError = ref('')
-const purgeDone = ref(false)
-const canPurge = computed(() => isOwner.value && (history.value.length > 1 || purgeDone.value))
-
-async function purgeHistory() {
-  if (!auth.agent || !note.value || !purgeArmed.value || purging.value) return
-  purging.value = true
-  purgeError.value = ''
-  try {
-    await lichen.purgeNoteHistory(auth.agent, note.value)
-    purgeArmed.value = false
-    purgeConfirmText.value = ''
-    purgeDone.value = true
-    // Reload the (now single-revision) history.
-    await load()
-  } catch (err) {
-    purgeError.value = err instanceof Error ? err.message : 'Could not purge history'
-  } finally {
-    purging.value = false
-  }
-}
 const canRestore = computed(() => canEdit(lichen.access) && !!auth.agent)
 
 const damagedUriSet = computed(() => new Set(note.value?.damagedRevisionUris ?? []))
@@ -303,80 +279,6 @@ async function restoreSelected() {
         <p v-if="eraseError" class="error-text">{{ eraseError }}</p>
       </section>
 
-      <section v-if="isOwner" class="purge-zone card">
-        <h2>Purge edit history</h2>
-        <p class="muted purge-warning">
-          The nuclear option — deletes
-          <strong>every</strong> revision of this page from your PDS and keeps only the current
-          text as a single fresh revision. Use the erase tool above to remove specific text
-          instead; purging throws away the whole changelog. This cannot be undone: export a
-          backup first if you might want the history. Note that third-party services that
-          already fetched these records may have retained copies.
-        </p>
-        <p class="muted purge-warning">
-          Permanently deletes every revision of this page from your PDS and keeps only the
-          current text as a single fresh revision. The changelog — including any removed text —
-          becomes unreadable to everyone, including via lichen.wiki. This cannot be undone:
-          export a backup first if you might want the history. Note that third-party services
-          that already fetched these records may have retained copies.
-        </p>
-        <p v-if="!purgeDone && canPurge" class="muted purge-count">
-          {{ history.length }} revision{{ history.length === 1 ? '' : 's' }} will be permanently deleted.
-        </p>
-        <p v-if="purgeDone" class="muted">History purged — this page now has a single clean revision.</p>
-        <p class="muted purge-warning">
-          To remove a specific passage instead of everything, use
-          <strong>Erase text from history</strong> above.
-        </p>
-        <button
-          v-if="!purgeArmed && canPurge"
-          type="button"
-          class="btn btn-danger-outline btn-sm"
-          @click="purgeArmed = true"
-        >
-          Purge edit history…
-        </button>
-        <div v-if="purgeArmed" class="purge-confirm">
-          <input
-            v-model="purgeConfirmText"
-            class="input"
-            type="text"
-            :placeholder="`Type PURGE to confirm`"
-            :disabled="purging"
-            aria-label="Type PURGE to confirm"
-          />
-          <div class="purge-actions">
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              :disabled="purging"
-              @click="purgeArmed = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              class="btn btn-danger btn-sm"
-              :disabled="purging || purgeConfirmText.trim().toUpperCase() !== 'PURGE'"
-              @click="purgeHistory"
-            >
-              {{ purging ? 'Purging…' : 'Delete all revisions permanently' }}
-            </button>
-          </div>
-        </div>
-        <p v-if="purgeError" class="error-text">{{ purgeError }}</p>
-      </section>
-
-      <div
-        v-if="note && damagedInHistory.length"
-        class="damaged-callout"
-        role="status"
-      >
-        <p>
-          {{ damagedInHistory.length === 1 ? '1 edit' : `${damagedInHistory.length} edits` }}
-          never made it into the page.
-          <template v-if="focusDamaged"> Jumping to {{ damagedInHistory.length === 1 ? 'it' : 'the latest' }}.</template>
-        </p>
         <div v-if="damagedInHistory.length > 1" class="damaged-callout-actions">
           <button type="button" class="btn btn-ghost btn-sm" @click="selectDamagedByOffset(-1)">
             Previous
@@ -691,17 +593,6 @@ header h1 {
 
 .erase-done {
   font-size: 0.875rem;
-}
-
-.purge-zone {
-  padding: 1rem 1.25rem;
-  border-color: color-mix(in srgb, var(--pckt-danger) 35%, var(--pckt-border));
-}
-
-.purge-zone h2 {
-  margin: 0 0 0.375rem;
-  font-size: 1rem;
-  color: var(--pckt-danger);
 }
 
 .purge-warning {

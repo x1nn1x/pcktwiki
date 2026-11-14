@@ -47,6 +47,43 @@ const merging = ref('')
 const mergeError = ref('')
 const mergeDone = ref('')
 
+const archived = computed(() => lichen.archivedNotes)
+const archiveBusy = ref('')
+const archiveError = ref('')
+
+async function restoreArchived(note: LichenNoteWithContent) {
+  if (!auth.agent) return
+  archiveBusy.value = note.uri
+  archiveError.value = ''
+  try {
+    await lichen.unarchiveNote(auth.agent, note)
+  } catch (err) {
+    archiveError.value = err instanceof Error ? err.message : 'Could not restore the page'
+  } finally {
+    archiveBusy.value = ''
+  }
+}
+
+async function deleteArchivedPermanently(note: LichenNoteWithContent) {
+  if (!auth.agent) return
+  const revisions = lichen.getHistory(note.uri).length
+  const ok = window.confirm(
+    `Permanently delete "${note.slug}" from your PDS?\n\n` +
+      `The page, its ${revisions} revision${revisions === 1 ? '' : 's'}, and any text they contain are removed for good — ` +
+      `including from lichen.wiki. This cannot be undone.`,
+  )
+  if (!ok) return
+  archiveBusy.value = note.uri
+  archiveError.value = ''
+  try {
+    await lichen.permanentlyDeleteArchivedNote(auth.agent, note)
+  } catch (err) {
+    archiveError.value = err instanceof Error ? err.message : 'Could not delete the page'
+  } finally {
+    archiveBusy.value = ''
+  }
+}
+
 const characterCount = (note: LichenNoteWithContent) => note.content.trim().length
 
 function mergeChoiceFor(group: DuplicateSlugGroup): MergeChoice {
@@ -260,6 +297,44 @@ watch(() => route.fullPath, load)
         </div>
       </section>
 
+      <section v-if="archived.length" class="card section">
+        <h2>Archive ({{ archived.length }})</h2>
+        <p class="muted">
+          Archived pages are hidden from the wiki immediately but their records and history
+          remain on your PDS. Restore them, or permanently delete them here.
+        </p>
+        <p v-if="archiveError" class="error-text">{{ archiveError }}</p>
+        <ul class="list">
+          <li v-for="note in archived" :key="note.uri" class="archive-row">
+            <div class="dupe-meta">
+              <strong>{{ note.title || note.slug }}</strong>
+              <span class="muted">/{{ note.slug }}</span>
+              <span v-if="note.content.trim()" class="muted">
+                {{ note.content.length }} chars
+              </span>
+            </div>
+            <div class="archive-actions">
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="archiveBusy === note.uri"
+                @click="restoreArchived(note)"
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger-outline btn-sm"
+                :disabled="archiveBusy === note.uri"
+                @click="deleteArchivedPermanently(note)"
+              >
+                Delete permanently
+              </button>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <section v-if="report.branches.length" class="card section">
         <h2>Branches ({{ report.branches.length }})</h2>
         <p class="muted">
@@ -416,6 +491,22 @@ header h1 {
   background: color-mix(in srgb, var(--pckt-accent, var(--pckt-red)) 6%, transparent);
 }
 
+.archive-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--pckt-border);
+}
+
+.archive-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.dupe-radio {
 .dupe-radio {
   display: inline-flex;
   align-items: center;

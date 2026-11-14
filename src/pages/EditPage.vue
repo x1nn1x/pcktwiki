@@ -65,6 +65,7 @@ const mergeError = ref('')
 const deleting = ref(false)
 const deleteError = ref('')
 const suggestionBusy = ref(false)
+const purgeOnSave = ref(false)
 let stopPresence: (() => void) | null = null
 let presencePoll: number | undefined
 
@@ -306,6 +307,7 @@ async function save() {
     handle.value,
     wikiSlug.value,
     editorRef.value?.getContentBlobs(),
+    purgeOnSave.value,
   )
 
   await maybePostImagesToBluesky({
@@ -538,6 +540,10 @@ const editingNote = computed(() =>
         @publish="save"
       />
 
+      <label v-if="editingNote" class="purge-check">
+        <input v-model="purgeOnSave" type="checkbox" :disabled="lichen.saving" />
+        <span>Purge edit history when saving — keeps only this version</span>
+      </label>
       <p v-if="lichen.error" class="error-text edit-error">{{ lichen.error }}</p>
       <p v-if="blueskyNotice" class="error-text edit-error">{{ blueskyNotice }}</p>
 
@@ -664,6 +670,16 @@ const editingNote = computed(() =>
   background: color-mix(in srgb, var(--pckt-accent, var(--pckt-red)) 8%, transparent);
 }
 
+.purge-check {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--pckt-text-muted);
+  cursor: pointer;
+}
+
+.edit-error {
 .edit-error {
   margin: 0;
 }

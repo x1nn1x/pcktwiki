@@ -27,6 +27,7 @@ export interface ResolvedWikiPolicy {
   forumThreads: 'anyone' | 'permitted'
   forumMods: string[]
   forumHiddenPosts: string[]
+  archivedSlugs: string[]
 }
 
 export const DEFAULT_WIKI_POLICY: ResolvedWikiPolicy = {
@@ -38,6 +39,7 @@ export const DEFAULT_WIKI_POLICY: ResolvedWikiPolicy = {
   forumThreads: 'anyone',
   forumMods: [],
   forumHiddenPosts: [],
+  archivedSlugs: [],
 }
 
 /** Fill gaps in a (possibly absent) policy record with documented defaults. */
@@ -52,6 +54,7 @@ export function resolveWikiPolicy(record: LichenPolicyRecord | null | undefined)
     forumThreads: record.forumThreads ?? DEFAULT_WIKI_POLICY.forumThreads,
     forumMods: record.forumMods ?? DEFAULT_WIKI_POLICY.forumMods,
     forumHiddenPosts: record.forumHiddenPosts ?? DEFAULT_WIKI_POLICY.forumHiddenPosts,
+    archivedSlugs: record.archivedSlugs ?? DEFAULT_WIKI_POLICY.archivedSlugs,
   }
 }
 
