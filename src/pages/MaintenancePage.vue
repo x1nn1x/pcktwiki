@@ -507,7 +507,6 @@ header h1 {
 }
 
 .dupe-radio {
-.dupe-radio {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;

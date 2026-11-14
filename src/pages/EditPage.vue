@@ -680,7 +680,6 @@ const editingNote = computed(() =>
 }
 
 .edit-error {
-.edit-error {
   margin: 0;
 }
 
