@@ -279,6 +279,16 @@ async function restoreSelected() {
         <p v-if="eraseError" class="error-text">{{ eraseError }}</p>
       </section>
 
+      <div
+        v-if="note && damagedInHistory.length"
+        class="damaged-callout"
+        role="status"
+      >
+        <p>
+          {{ damagedInHistory.length === 1 ? '1 edit' : `${damagedInHistory.length} edits` }}
+          never made it into the page.
+          <template v-if="focusDamaged"> Jumping to {{ damagedInHistory.length === 1 ? 'it' : 'the latest' }}.</template>
+        </p>
         <div v-if="damagedInHistory.length > 1" class="damaged-callout-actions">
           <button type="button" class="btn btn-ghost btn-sm" @click="selectDamagedByOffset(-1)">
             Previous
