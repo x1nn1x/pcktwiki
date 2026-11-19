@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { assetUrl } from '@/lib/base-url'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
+import { useOverlayDismiss } from '@/composables/useOverlayDismiss'
+import { headerLinkHref, isExternalHeaderLink } from '@/lib/lichen/header-links'
 import PcktSparkLogomark from '@/components/PcktSparkLogomark.vue'
 import LandingSignInCard from '@/components/landing/LandingSignInCard.vue'
 import HeaderNavMenu from '@/components/HeaderNavMenu.vue'
@@ -219,6 +221,94 @@ const showLogoEditTarget = computed(
       (openTarget.value === 'headerImage' && canManageWikiChrome.value)),
 )
 const editingNavbar = computed(() => openTarget.value === 'navbarLinks')
+
+/**
+ * The wiki's top navbar links are centered between the brand area and the
+ * account actions. When there is not room for all three, the links fold into
+ * a hamburger menu instead of overlapping the sign-in button.
+ */
+const HAMBURGER_RESERVE_PX = 44 // trigger width plus flex-gap slack
+const NAV_GAPS_PX = 40 // the two header-inner flex gaps plus rounding slack
+
+const headerInnerRef = ref<HTMLElement | null>(null)
+const brandAreaRef = ref<HTMLElement | null>(null)
+const navActionsRef = ref<HTMLElement | null>(null)
+const navCollapsed = ref(false)
+
+const navMenuOpen = ref(false)
+const navMenuRef = ref<HTMLElement | null>(null)
+
+useOverlayDismiss(navMenuRef, navMenuOpen, () => {
+  navMenuOpen.value = false
+})
+
+function navbarHref(url: string): string {
+  return headerLinkHref(url, `/@${navbarOwnerHandle.value}/${navbarWikiSlug.value}`)
+}
+
+/**
+ * The links keep their layout while collapsed (visibility, not display), so
+ * their natural width stays measurable. The trigger stays mounted with a
+ * reserved budget so the collapse decision already accounts for it.
+ */
+function measureNavbar(): void {
+  if (!showNavbarEditTarget.value || editingNavbar.value) {
+    navCollapsed.value = false
+    return
+  }
+  const inner = headerInnerRef.value
+  if (!inner) {
+    navCollapsed.value = false
+    return
+  }
+  const links = inner.querySelector('.header-wiki-nav .wiki-header-links')
+  const needed = links instanceof HTMLElement ? links.scrollWidth : 0
+  // Late font loads change the links' width without resizing the header —
+  // observing the element itself keeps the decision current. Idempotent.
+  headerResizeObserver?.observe(links instanceof HTMLElement ? links : inner)
+  const available =
+    inner.clientWidth -
+    (brandAreaRef.value?.offsetWidth ?? 0) -
+    (navActionsRef.value?.offsetWidth ?? 0) -
+    HAMBURGER_RESERVE_PX -
+    NAV_GAPS_PX
+  navCollapsed.value = needed > available
+  if (navCollapsed.value) navMenuOpen.value = false
+}
+
+let headerResizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  headerResizeObserver = new ResizeObserver(measureNavbar)
+  if (headerInnerRef.value) headerResizeObserver.observe(headerInnerRef.value)
+  measureNavbar()
+})
+
+onUnmounted(() => {
+  headerResizeObserver?.disconnect()
+  headerResizeObserver = null
+})
+
+watch(
+  () =>
+    [
+      showNavbarEditTarget.value,
+      editingNavbar.value,
+      navbarLinks.value.length,
+      auth.isAuthenticated,
+      auth.loading,
+    ] as const,
+  () => {
+    void nextTick(measureNavbar)
+  },
+)
+
+watch(
+  () => route.fullPath,
+  () => {
+    navMenuOpen.value = false
+  },
+)
 const editingLogo = computed(() => openTarget.value === 'headerImage')
 
 watch(
@@ -309,10 +399,11 @@ function onBrandMenuClick(event: Event, toggle: (event: Event) => void) {
       'header-home': isHome,
       'header-minimal': isWikiView,
       'header-has-wiki-nav': showNavbarEditTarget,
+      'is-nav-collapsed': navCollapsed,
     }"
   >
-    <div class="header-inner">
-      <div class="brand-area">
+    <div ref="headerInnerRef" class="header-inner">
+      <div ref="brandAreaRef" class="brand-area">
         <HeaderNavMenu :is-home="isHome" align="start" class="brand-menu">
           <template #trigger="{ toggle, open }">
             <button
@@ -406,7 +497,59 @@ function onBrandMenuClick(event: Event, toggle: (event: Event) => void) {
       </WikiEditable>
 
       <nav class="nav">
-        <div class="nav-actions">
+        <!-- Wiki navbar links fold in here when they would collide with the
+             account actions; the trigger keeps a reserved width budget. -->
+        <div
+          v-if="showNavbarEditTarget && !editingNavbar"
+          ref="navMenuRef"
+          class="header-nav-toggle-wrap"
+        >
+          <button
+            type="button"
+            class="header-nav-toggle"
+            :aria-expanded="navMenuOpen"
+            aria-haspopup="menu"
+            aria-label="Wiki navigation"
+            @click="navMenuOpen = !navMenuOpen"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                d="M4 6h16M4 12h16M4 18h16"
+              />
+            </svg>
+          </button>
+          <div v-if="navMenuOpen" class="header-nav-menu-panel" role="menu">
+            <ul class="header-nav-menu-list">
+              <li v-for="(link, index) in navbarLinks" :key="index" role="none">
+                <a
+                  v-if="isExternalHeaderLink(link.url)"
+                  class="header-nav-menu-link"
+                  :href="link.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  role="menuitem"
+                  @click="navMenuOpen = false"
+                >
+                  {{ link.label }}
+                </a>
+                <RouterLink
+                  v-else
+                  class="header-nav-menu-link"
+                  :to="navbarHref(link.url)"
+                  role="menuitem"
+                  @click="navMenuOpen = false"
+                >
+                  {{ link.label }}
+                </RouterLink>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div ref="navActionsRef" class="nav-actions">
           <LandingSignInCard v-if="!auth.isAuthenticated && !auth.loading" header />
           <template v-else-if="auth.isAuthenticated">
             <button
@@ -764,6 +907,81 @@ header.header:not(.header-home) .nav {
   margin-left: auto;
 }
 
+/* Wiki navbar links folded into the hamburger: keep their layout for width
+   measurement, just take them off screen. */
+header.header.is-nav-collapsed .header-wiki-nav {
+  visibility: hidden;
+}
+
+.header-nav-toggle-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.header-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: none;
+  border-radius: var(--pckt-radius-sm);
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--pckt-text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.header-nav-toggle:hover {
+  background: color-mix(in srgb, var(--pckt-text) 6%, transparent);
+}
+
+header.header.is-nav-collapsed .header-nav-toggle {
+  display: inline-flex;
+}
+
+.header-nav-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 60;
+  min-width: 10rem;
+  max-width: min(16rem, calc(100vw - 2rem));
+  overflow: hidden;
+  border: 1px solid var(--pckt-border);
+  border-radius: var(--pckt-radius);
+  background: var(--pckt-bg-elevated);
+  box-shadow: var(--pckt-shadow-md);
+}
+
+.header-nav-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.375rem;
+}
+
+.header-nav-menu-link {
+  display: block;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--pckt-radius-sm);
+  color: var(--pckt-text);
+  font-family: var(--pckt-font-ui);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.3;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.header-nav-menu-link:hover,
+.header-nav-menu-link.router-link-active {
+  background: var(--pckt-bg-muted);
+  color: var(--pckt-text);
+  text-decoration: none;
+}
+
 @media (max-width: 1100px) {
   header.header-minimal .brand-area {
     min-width: 0;
@@ -773,31 +991,6 @@ header.header:not(.header-home) .nav {
 @media (max-width: 720px) {
   .nav {
     max-width: none;
-  }
-
-  /* Give wiki navbar its own full-width row so links stay tappable. */
-  header.header-has-wiki-nav .header-inner {
-    flex-wrap: wrap;
-    row-gap: 0.25rem;
-  }
-
-  header.header-has-wiki-nav .header-wiki-nav {
-    position: static;
-    transform: none;
-    order: 3;
-    flex: 1 0 100%;
-    width: 100%;
-    max-width: none;
-    margin-inline: calc(-1 * var(--pckt-page-gutter));
-    padding-inline: var(--pckt-page-gutter);
-  }
-
-  header.header-has-wiki-nav .header-wiki-nav :deep(.wiki-header-links.is-navbar) {
-    justify-content: center;
-    gap: 0.125rem;
-    padding-block: 0.125rem;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
   }
 }
 
@@ -817,24 +1010,6 @@ header.header:not(.header-home) .nav {
 
   .header-wiki-brand {
     max-width: min(10rem, 36vw);
-  }
-
-  header.header-has-wiki-nav .header-wiki-nav {
-    margin-inline: -0.875rem;
-    padding-inline: 0.875rem;
-  }
-}
-
-@media (max-width: 430px) {
-  header.header-has-wiki-nav .header-wiki-nav {
-    margin-inline: -0.5rem;
-    padding-inline: 0.5rem;
-  }
-
-  header.header-has-wiki-nav .header-wiki-nav :deep(.wiki-header-links.is-navbar) {
-    justify-content: center;
-    gap: 0;
-    overflow-x: visible;
   }
 }
 </style>

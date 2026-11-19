@@ -94,7 +94,11 @@ export function parseWikilinkTarget(
   return {
     ...(currentOwnerHandle ? { ownerHandle: currentOwnerHandle } : {}),
     ...(currentWikiSlug ? { wikiSlug: currentWikiSlug } : {}),
-    noteSlug: rawTarget,
+    // Plain targets canonicalize to article slugs so [[Yameii]] resolves the
+    // same as [[yameii]] — hrefs, backlinks, and missing-page detection all
+    // compare against lowercase slug sets. Unslugifiable targets (e.g. CJK)
+    // keep their raw form.
+    noteSlug: slugifyHeading(rawTarget) || rawTarget,
     label: rawLabel || `${rawTarget}${sectionSuffix}`,
     ...(section ? { section } : {}),
   }

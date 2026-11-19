@@ -4,8 +4,10 @@ import { RouterLink } from 'vue-router'
 import type { LichenNoteWithContent, LichenHeaderLink } from '@/types/lichen'
 import type { StandardSiteDocument, StandardSitePublication } from '@/types/lichen'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import TableOfContents from '@/components/TableOfContents.vue'
 import BlogListEmbed from '@/components/BlogListEmbed.vue'
 import BacklinksPanel from '@/components/BacklinksPanel.vue'
+import ArticleKnowledgeGraph from '@/components/ArticleKnowledgeGraph.vue'
 import ReferencedByPanel from '@/components/ReferencedByPanel.vue'
 import RelationshipsPanel from '@/components/RelationshipsPanel.vue'
 import TalkCommentsPanel from '@/components/TalkCommentsPanel.vue'
@@ -26,6 +28,12 @@ import { findWikiNoteForBlogPost } from '@/lib/blog-sync'
 import { templateLabel } from '@/lib/lichen/templates'
 import { collectWikiRelations, relationsForNote } from '@/lib/lichen/relations'
 import { useReaderPrefs } from '@/composables/useReaderPrefs'
+import {
+  extractTocFromMarkdown,
+  headingIdCounts,
+  splitLeadSection,
+  type TocEntry,
+} from '@/lib/toc'
 
 const props = defineProps<{
   note: LichenNoteWithContent
@@ -70,6 +78,30 @@ const showSubheaderEditable = computed(
 
 const parsed = computed(() => parseNoteContent(props.note.content))
 const bodyIsEmpty = computed(() => !parsed.value.body.trim())
+
+/**
+ * Wikipedia places the Contents box after the lead section, before the first
+ * `##` heading. To do that, the article renders as two markdown chunks with
+ * the box between them — but only when there is a table of contents worth
+ * showing (two or more sections).
+ */
+const articleSplit = computed<{
+  lead: string
+  rest: string
+  entries: TocEntry[]
+  leadHeadingCounts: Map<string, number>
+} | null>(() => {
+  const body = parsed.value.body
+  const entries = extractTocFromMarkdown(body)
+  if (entries.length < 2 || bodyIsEmpty.value) return null
+  const { lead, rest } = splitLeadSection(body)
+  return {
+    lead,
+    rest,
+    entries,
+    leadHeadingCounts: headingIdCounts(lead),
+  }
+})
 const showBlogList = computed(() => props.note.slug === 'blog')
 const isTalk = computed(() => isTalkSlug(props.note.slug))
 const talkSubjectSlug = computed(() => subjectSlugFromTalk(props.note.slug))
@@ -277,6 +309,31 @@ function dismissDamageBanner() {
         <p v-else-if="bodyIsEmpty" class="start-writing start-writing--readonly muted">
           Nothing written yet.
         </p>
+        <template v-else-if="articleSplit">
+          <!-- Wikipedia order: lead section, Contents box, then the
+               rest of the sections. The rest render seeds its heading ids
+               from the lead so duplicate titles stay uniquely anchored. -->
+          <MarkdownRenderer
+            :source="articleSplit.lead"
+            :wiki-slug="wikiSlug"
+            :owner-handle="ownerHandle"
+            :owner-did="ownerDid"
+            :wiki-notes="wikiNotes"
+            :can-edit="!!canEdit"
+            @edit="startWriting"
+          />
+          <TableOfContents :entries="articleSplit.entries" />
+          <MarkdownRenderer
+            :source="articleSplit.rest"
+            :wiki-slug="wikiSlug"
+            :owner-handle="ownerHandle"
+            :owner-did="ownerDid"
+            :wiki-notes="wikiNotes"
+            :heading-id-counts="articleSplit.leadHeadingCounts"
+            :can-edit="!!canEdit"
+            @edit="startWriting"
+          />
+        </template>
         <MarkdownRenderer
           v-else
           :source="note.content"
@@ -286,6 +343,15 @@ function dismissDamageBanner() {
           :wiki-notes="wikiNotes"
           :can-edit="!!canEdit"
           @edit="startWriting"
+        />
+
+        <ArticleKnowledgeGraph
+          v-if="!isTalk && !bodyIsEmpty"
+          :note="note"
+          :owner-handle="ownerHandle"
+          :wiki-slug="wikiSlug"
+          :wiki-notes="wikiNotes"
+          :backlinks="backlinks"
         />
 
         <RelationshipsPanel

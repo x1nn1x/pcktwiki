@@ -16,12 +16,10 @@ import { useWikiEditMode } from '@/composables/useWikiEditMode'
 import { useWikiThemeMode } from '@/composables/useWikiThemeMode'
 import { useMapProgress } from '@/composables/useMapProgress'
 import { parseNoteContent } from '@/lib/lichen/content-meta'
-import { extractTocFromMarkdown } from '@/lib/toc'
 import { isCanonUnlocked } from '@/lib/lichen/map-fog'
 import WikiHero from '@/components/WikiHero.vue'
 import WikiHeaderLinks from '@/components/WikiHeaderLinks.vue'
 import WikiNav from '@/components/WikiNav.vue'
-import TableOfContents from '@/components/TableOfContents.vue'
 import NoteContent from '@/components/NoteContent.vue'
 import WikiPortal from '@/components/WikiPortal.vue'
 import WikiToolbar from '@/components/WikiToolbar.vue'
@@ -150,13 +148,6 @@ const currentNote = computed(() => {
   return lichen.getResolvedNote(slug) ?? lichen.getNoteBySlug(slug) ?? null
 })
 
-/** Per-article section list shown in the sidebar, adapting to the open page. */
-const noteToc = computed(() => {
-  if (!currentNote.value) return []
-  const body = parseNoteContent(currentNote.value.content).body
-  return extractTocFromMarkdown(body)
-})
-
 /** Forks are a property of the wiki, so they belong on its front page only. */
 const isWikiHome = computed(() => currentNote.value?.slug === 'home')
 
@@ -185,6 +176,8 @@ watch(
   (note) => {
     if (!note) return
     const meta = parseNoteContent(note.content)
+    // Unpublished drafts never reveal places, not even for their author.
+    if (meta.status === 'draft') return
     if (meta.mapX == null || meta.mapY == null) return
     if (!isCanonUnlocked(meta)) return
     discoverMapPlace(note.slug)
@@ -204,6 +197,30 @@ const noteCaps = computed(() =>
 const canEditWiki = computed(() => noteCaps.value.canPublish || noteCaps.value.canSuggest)
 const canPublishWiki = computed(() => noteCaps.value.canPublish)
 const canManageWiki = computed(() => canManage(lichen.access))
+
+/**
+ * Draft pages are working copies: only people who can actually publish this
+ * wiki (owner/admins) see them. Proposers and readers get the public wiki.
+ * The records still live in the owner's public repo — this is an app-level
+ * "not published yet" gate, not encryption.
+ */
+const canViewDrafts = computed(() => canManageWiki.value || canPublishWiki.value)
+
+const visibleNotes = computed(() => {
+  if (canViewDrafts.value) return lichen.notes
+  return lichen.notes.filter((note) => parseNoteContent(note.content).status !== 'draft')
+})
+
+/** A draft opened by someone who may not see it reads as a missing page. */
+const draftPageHidden = computed(() => {
+  const note = currentNote.value
+  if (!note || canViewDrafts.value) return false
+  return parseNoteContent(note.content).status === 'draft'
+})
+
+const draftPageBlocked = computed(
+  () => !lichen.loading && !!lichen.currentWiki && !lichen.error && draftPageHidden.value,
+)
 
 /**
  * The OS-style bottom dock mirrors the wiki's own editable navbar links — the
@@ -269,9 +286,9 @@ const showRateLimitSignInHint = computed(
   () => !auth.isAuthenticated && isRateLimitUserMessage(lichen.error),
 )
 
-const categories = computed(() => computeWikiCategories(lichen.notes))
+const categories = computed(() => computeWikiCategories(visibleNotes.value))
 /** Sidebar teaser — the “All recent changes” page shows the fuller list. */
-const recentChanges = computed(() => listRecentChanges(lichen.revisions, lichen.notes, 4))
+const recentChanges = computed(() => listRecentChanges(lichen.revisions, visibleNotes.value, 4))
 const blogSuggestions = computed(() => lichen.getBlogStubSuggestions())
 
 const shareTitle = computed(() => {
@@ -310,30 +327,6 @@ async function createAllStubs() {
     await lichen.createAllBlogStubs(auth.agent)
   } finally {
     creatingStubs.value = false
-  }
-}
-
-// Remix — fork this wiki into the viewer's account (surfaced on the home page
-// for non-owners; the browse directory cards use the same helper).
-const remixing = ref(false)
-const remixError = ref('')
-async function remixThisWiki() {
-  if (!auth.agent) {
-    router.push({ name: 'home', query: { redirect: route.fullPath } })
-    return
-  }
-  remixing.value = true
-  remixError.value = ''
-  try {
-    const { remixWiki } = await import('@/lib/lichen/fork-wiki')
-    const wiki = await remixWiki(auth.agent, handle.value, wikiSlug.value, {
-      forkHandle: auth.handle ?? '',
-    })
-    await router.push(`/@${auth.handle}/${wiki.slug}`)
-  } catch (err) {
-    remixError.value = err instanceof Error ? err.message : 'Could not remix this wiki'
-  } finally {
-    remixing.value = false
   }
 }
 
@@ -390,7 +383,9 @@ function handleWikiShortcut(key: string, e: KeyboardEvent): boolean {
   }
 }
 
-onMounted(() => nav.setPageShortcutHandler(handleWikiShortcut))
+onMounted(() => {
+  nav.setPageShortcutHandler(handleWikiShortcut)
+})
 onUnmounted(() => {
   nav.setPageShortcutHandler(null)
   exitEditMode()
@@ -403,30 +398,8 @@ onUnmounted(() => {
     <WikiThemeRegionOverlay v-if="themeModeActive && canManageWiki" />
     <div
       class="wiki-layout"
-      :class="{ 'has-sidebars': lichen.notes.length > 0 }"
+      :class="{ 'has-sidebars': visibleNotes.length > 0 }"
     >
-      <aside
-        v-if="lichen.notes.length"
-        class="wiki-sidebar wiki-sidebar-start"
-        data-kb-section
-        aria-label="Wiki sidebar"
-      >
-        <WikiSearch
-          :notes="lichen.notes"
-          :owner-handle="handle"
-          :wiki-slug="wikiSlug"
-        />
-        <WikiNav
-          :notes="lichen.notes"
-          :owner-handle="handle"
-          :wiki-slug="wikiSlug"
-          :active-slug="activeSlug"
-          :can-manage="canManageWiki"
-          :sidebar-order="lichen.currentWiki?.sidebarOrder"
-        />
-        <TableOfContents variant="sidebar" :entries="noteToc" />
-      </aside>
-
       <div class="wiki-main" data-kb-section aria-label="Wiki content">
         <div v-if="lichen.loading" class="state muted">Loading wiki…</div>
         <div v-else-if="lichen.error" class="state">
@@ -438,6 +411,14 @@ onUnmounted(() => {
           />
           <p class="error-text">{{ lichen.error }}</p>
           <RateLimitSignInHint v-if="showRateLimitSignInHint" />
+        </div>
+        <div v-else-if="draftPageBlocked" class="state not-found draft-hidden">
+          <h1 class="draft-hidden-title">This page isn’t published yet</h1>
+          <p class="muted">
+            The author is still working on it. Try the
+            <RouterLink :to="`/@${handle}/${wikiSlug}`">wiki home</RouterLink>
+            instead.
+          </p>
         </div>
         <div v-else-if="noteNotFound" class="state" :class="{ 'not-found': openTarget !== 'createNote' }">
           <WikiEditable
@@ -572,7 +553,7 @@ onUnmounted(() => {
             :wiki-slug="wikiSlug"
             :wiki-uri="lichen.currentWiki.uri"
             :wiki-name="lichen.currentWiki.name"
-            :notes="lichen.notes"
+            :notes="visibleNotes"
             :can-edit="canEditWiki"
             :can-manage="canManageWiki"
             :is-public="lichen.currentWiki.visibility === 'public'"
@@ -592,26 +573,6 @@ onUnmounted(() => {
             :slug="wikiSlug"
           />
 
-          <section
-            v-if="isWikiHome && !canPublishWiki && lichen.currentWiki"
-            class="card remix-card"
-          >
-            <h2>Remix this wiki</h2>
-            <p class="muted">
-              Fork it into your own account — every page, image, and the theme come with you,
-              and you can pull in the original's later changes whenever you want.
-            </p>
-            <button
-              type="button"
-              class="btn btn-primary"
-              :disabled="remixing"
-              @click="remixThisWiki"
-            >
-              {{ remixing ? 'Remixing…' : auth.isAuthenticated ? 'Remix this wiki' : 'Sign in to remix' }}
-            </button>
-            <p v-if="remixError" class="error-text">{{ remixError }}</p>
-          </section>
-
           <NoteContent
             :key="currentNote.uri"
             :note="currentNote"
@@ -621,7 +582,7 @@ onUnmounted(() => {
             :reference-subjects="referenceSubjects"
             :blog-posts="lichen.blogPosts"
             :publications="lichen.publications"
-            :wiki-notes="lichen.notes"
+            :wiki-notes="visibleNotes"
             :subheader-links="currentNote.subheaderLinks"
             :owner-did="lichen.currentWiki.ownerDid"
             :can-edit="canEditWiki"
@@ -631,8 +592,33 @@ onUnmounted(() => {
         </template>
       </div>
 
+      <!-- Pages rail sits after the article: on desktop it is still the left
+           column (grid areas), while on narrow viewports it flows below the
+           article instead of above it. -->
       <aside
-        v-if="lichen.notes.length"
+        v-if="visibleNotes.length"
+        id="wiki-sidebar-start"
+        class="wiki-sidebar wiki-sidebar-start"
+        data-kb-section
+        aria-label="Wiki sidebar"
+      >
+        <WikiSearch
+          :notes="visibleNotes"
+          :owner-handle="handle"
+          :wiki-slug="wikiSlug"
+        />
+        <WikiNav
+          :notes="visibleNotes"
+          :owner-handle="handle"
+          :wiki-slug="wikiSlug"
+          :active-slug="activeSlug"
+          :can-manage="canManageWiki"
+          :sidebar-order="lichen.currentWiki?.sidebarOrder"
+        />
+      </aside>
+
+      <aside
+        v-if="visibleNotes.length"
         class="wiki-sidebar wiki-sidebar-end"
         data-kb-section
         aria-label="Wiki tools"
@@ -646,7 +632,7 @@ onUnmounted(() => {
         <WikiPortal
           :owner-handle="handle"
           :wiki-slug="wikiSlug"
-          :notes="lichen.notes"
+          :notes="visibleNotes"
           :recent-changes="recentChanges"
           :categories="categories"
           :can-edit="canEditWiki"
@@ -724,7 +710,15 @@ onUnmounted(() => {
   width: var(--pckt-sidebar-width);
   max-height: 100dvh;
   overflow-y: auto;
+  scrollbar-width: thin;
   background: var(--pckt-wiki-sidebar-bg, transparent);
+}
+
+/* Keep the page list from pushing the search box out of the rail: the list
+   scrolls within itself so search stays in view. */
+.wiki-sidebar-start :deep(.wiki-nav) {
+  max-height: 45dvh;
+  overflow-y: auto;
 }
 
 /* The end rail's cards run taller than the viewport, so capping it at 100dvh
@@ -743,11 +737,19 @@ onUnmounted(() => {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'main'
+      'start'
       'end';
   }
 
+  /* Narrow viewports: article first, then the Pages rail (search + page
+     list), then the tools rail — no drawer or toggle. */
   .wiki-sidebar-start {
-    display: none;
+    position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    background: none;
+    padding: 1.5rem var(--pckt-page-gutter) 0;
   }
 
   .wiki-sidebar-end {
@@ -761,14 +763,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .wiki-view {
     padding: 0 0 3rem;
-  }
-
-  .wiki-sidebar {
-    position: static;
-    top: auto;
-    width: auto;
-    max-height: none;
-    overflow: visible;
   }
 
   .wiki-sidebar-end {
@@ -810,22 +804,5 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: center;
-}
-
-.remix-card {
-  padding: 1rem 1.25rem;
-  margin-top: 1rem;
-  display: grid;
-  gap: 0.5rem;
-}
-
-.remix-card h2 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.remix-card p {
-  margin: 0;
-  font-size: 0.875rem;
 }
 </style>

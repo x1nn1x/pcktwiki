@@ -13,7 +13,8 @@
     "postinstall": "node scripts/build-silkdown.mjs",
     "prebuild": "node scripts/build-silkdown.mjs",
     "predev": "node scripts/build-silkdown.mjs",
-    "pretest": "node scripts/build-silkdown.mjs"
+    "pretest": "node scripts/build-silkdown.mjs",
+    "build:featured": "node scripts/build-featured-snapshot.mjs"
   },
   "dependencies": {
     "@atcute/jetstream": "^2.0.0",
@@ -33,6 +34,7 @@
     "diff-match-patch": "^1.0.5",
     "dompurify": "^3.4.8",
     "fflate": "^0.8.3",
+    "fzstd": "^0.1.1",
     "idb": "^8.0.3",
     "markdown-it": "^14.2.0",
     "motion-v": "^2.3.0",

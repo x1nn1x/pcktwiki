@@ -8,6 +8,7 @@ import {
   type EditPatch,
 } from '@/lib/editor/actions'
 import { continueBlock, indentLines } from '@/lib/editor/typing'
+import { imageFilesFromDrop } from '@/lib/editor/drop-files'
 import { highlightMarkdown } from '@/lib/editor/highlight'
 import { shortcutAction } from '@/lib/editor/toolbar'
 import {
@@ -294,11 +295,12 @@ function onPaste(event: ClipboardEvent) {
   applyAction('link', { url: text })
 }
 
-function onDrop(event: DragEvent) {
-  const images = imageFilesFrom(event.dataTransfer?.files)
-  if (!images.length) return
+async function onDrop(event: DragEvent) {
+  // Expands folders dragged from the desktop (webkitGetAsEntry traversal).
+  const { files } = await imageFilesFromDrop(event.dataTransfer)
+  if (!files.length) return
   event.preventDefault()
-  emit('image-files', images)
+  emit('image-files', files)
 }
 
 function onSelectionChange() {

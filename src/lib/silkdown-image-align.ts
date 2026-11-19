@@ -25,6 +25,9 @@ import {
   findMarkdownImages,
   findMasonryRun,
   effectiveImageGap,
+  moveImageToPosition,
+  moveImageWithinRun,
+  removeImageFromDoc,
   type ImageAlign,
   type ImageCrop,
   type ImageGap,
@@ -32,6 +35,7 @@ import {
   type MarkdownImage,
 } from '@/lib/editor/image-align'
 import { selectionTouchesRange } from '@/lib/silkdown-decorate'
+import { createImageDragZones, type ImageDragZones } from '@/lib/editor/drag-zones'
 
 const ALIGN_CLASSES: Record<ImageAlign, string> = {
   left: 'sd-image--left',
@@ -58,11 +62,292 @@ const ALL_SIZE_CLASSES = Object.values(SIZE_CLASSES)
 const ALL_CROP_CLASSES = Object.values(CROP_CLASSES)
 
 interface GalleryThumb {
+  from: number
   src: string
   alt: string
   current: boolean
   crop: ImageCrop | null
   size: ImageSize | null
+}
+
+/* ---------------------------------------------------------------------------
+ * Gallery drag & drop (the pckt.blog reference flow): thumbs drag with a
+ * tilted polaroid ghost, siblings reflow around a gap indicator, and the
+ * "set as thumbnail" / "delete" strips appear above and below while dragging.
+ * Pointer events (not HTML5 drag) so the identical interaction works with
+ * touch on mobile. State is module-level because a drag crosses widget and
+ * editor DOM boundaries that CodeMirror state cannot span.
+ * ------------------------------------------------------------------------- */
+
+interface ActiveImageDrag {
+  view: EditorView
+  /** Reveal widget root (drives the is-dragging visuals). Null when null. */
+  root: HTMLElement | null
+  /** Thumb strip — reorder gap indicators live here. */
+  row: HTMLElement | null
+  imageFrom: number
+  thumbSrc: string
+  thumbAlt: string
+  pointerId: number
+  ghost: HTMLElement | null
+  zones: ImageDragZones
+  mode: 'reorder' | 'thumbnail' | 'delete' | 'move' | null
+  lastX: number
+  lastY: number
+  startX: number
+  startY: number
+  started: boolean
+}
+
+let activeImageDrag: ActiveImageDrag | null = null
+
+function applyPatchToView(view: EditorView, patch: {
+  from: number
+  to: number
+  insert: string
+  selectionStart: number
+  selectionEnd: number
+}) {
+  if (patch.insert === view.state.doc.sliceString(patch.from, patch.to)) return
+  view.dispatch({
+    changes: { from: patch.from, to: patch.to, insert: patch.insert },
+    selection: { anchor: patch.selectionStart, head: patch.selectionEnd },
+    scrollIntoView: true,
+  })
+  view.focus()
+}
+
+/** Tilted "polaroid" ghost that follows the cursor, like the reference editor. */
+function makePolaroidGhost(src: string, alt: string): HTMLElement {
+  const ghost = document.createElement('div')
+  ghost.className = 'sd-image-polaroid-ghost'
+  const img = document.createElement('img')
+  img.src = src
+  img.alt = alt
+  ghost.appendChild(img)
+  ghost.style.position = 'fixed'
+  ghost.style.top = '-1000px'
+  document.body.appendChild(ghost)
+  return ghost
+}
+
+function clearDragVisuals(root: HTMLElement | null, row: HTMLElement | null) {
+  root?.classList.remove('is-dragging')
+  row?.querySelectorAll('.sd-gallery-thumb').forEach((el) => {
+    el.classList.remove('drop-before', 'drop-after')
+  })
+}
+
+function thumbInsertIndex(row: HTMLElement, clientX: number): number {
+  const thumbs = Array.from(row.querySelectorAll<HTMLElement>('.sd-gallery-thumb'))
+  for (let i = 0; i < thumbs.length; i += 1) {
+    const rect = thumbs[i]!.getBoundingClientRect()
+    if (clientX < rect.left + rect.width / 2) return i
+  }
+  return thumbs.length
+}
+
+function markDropGap(row: HTMLElement | null, index: number | null) {
+  if (!row) return
+  const thumbs = Array.from(row.querySelectorAll<HTMLElement>('.sd-gallery-thumb'))
+  thumbs.forEach((el, i) => {
+    el.classList.toggle('drop-before', index === i)
+    el.classList.toggle('drop-after', index === i + 1 && i + 1 === thumbs.length)
+  })
+}
+
+function pointInRect(x: number, y: number, rect: DOMRect): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+/** Zones sit just outside the widget box, like the reference editor. */
+function galleryDragBounds(root: HTMLElement | null) {
+  return () => {
+    if (!root?.isConnected) return null
+    const rect = root.getBoundingClientRect()
+    const stripHeight = 40
+    return {
+      top: new DOMRect(rect.left, rect.top - stripHeight - 6, rect.width, stripHeight),
+      bottom: new DOMRect(rect.left, rect.bottom + 6, rect.width, stripHeight),
+    }
+  }
+}
+
+function onGalleryDragMove(event: PointerEvent) {
+  const drag = activeImageDrag
+  if (!drag || event.pointerId !== drag.pointerId) return
+  drag.lastX = event.clientX
+  drag.lastY = event.clientY
+
+  if (!drag.started) {
+    const dx = event.clientX - drag.startX
+    const dy = event.clientY - drag.startY
+    if (Math.hypot(dx, dy) < 6) return
+    drag.started = true
+    drag.ghost = makePolaroidGhost(drag.thumbSrc, drag.thumbAlt)
+    drag.root?.classList.add('is-dragging')
+    drag.zones.mount(galleryDragBounds(drag.root))
+  }
+
+  if (drag.ghost) {
+    drag.ghost.style.left = `${event.clientX - drag.ghost.offsetWidth / 2}px`
+    drag.ghost.style.top = `${event.clientY - drag.ghost.offsetHeight / 2}px`
+  }
+
+  const hit = drag.zones.hitTest(event.clientX, event.clientY)
+  drag.zones.setTarget(hit)
+  if (hit) {
+    drag.mode = hit
+    markDropGap(drag.row, null)
+    return
+  }
+
+  if (drag.row) {
+    const rowRect = drag.row.getBoundingClientRect()
+    if (pointInRect(event.clientX, event.clientY, rowRect)) {
+      drag.mode = 'reorder'
+      markDropGap(drag.row, thumbInsertIndex(drag.row, event.clientX))
+      return
+    }
+  }
+  drag.mode = 'move'
+  markDropGap(drag.row, null)
+}
+
+function onGalleryDragEnd(event: PointerEvent) {
+  const drag = activeImageDrag
+  if (!drag || event.pointerId !== drag.pointerId) return
+  window.removeEventListener('pointermove', onGalleryDragMove)
+  window.removeEventListener('pointerup', onGalleryDragEnd)
+  window.removeEventListener('pointercancel', onGalleryDragEnd)
+  drag.ghost?.remove()
+  drag.zones.destroy()
+  clearDragVisuals(drag.root, drag.row)
+  activeImageDrag = null
+  if (!drag.started) return // a tap, not a drag
+
+  const view = drag.view
+  const doc = view.state.doc.toString()
+  const image = findMarkdownImages(doc).find((im) => im.from === drag.imageFrom)
+  if (!image) return
+
+  if (drag.mode === 'delete') {
+    applyPatchToView(view, removeImageFromDoc(doc, image))
+    return
+  }
+  if (drag.mode === 'thumbnail') {
+    // The page thumbnail is the first body image — move it to the top.
+    applyPatchToView(view, moveImageToPosition(doc, image, 0)!)
+    return
+  }
+  if (drag.mode === 'reorder' && drag.row) {
+    const run = image.masonry ? findMasonryRun(doc, image) : []
+    if (run.length >= 2) {
+      const fromIdx = run.findIndex((im) => im.from === image.from)
+      const targetIdx = thumbInsertIndex(drag.row, drag.lastX)
+      let toIdx = targetIdx
+      if (fromIdx >= 0 && targetIdx > fromIdx) toIdx = targetIdx - 1
+      const patch = moveImageWithinRun(doc, run, image, toIdx)
+      if (patch) applyPatchToView(view, patch)
+    }
+    return
+  }
+  if (drag.mode === 'move') {
+    const pos = view.posAtCoords({ x: drag.lastX, y: drag.lastY })
+    if (pos != null) {
+      const patch = moveImageToPosition(doc, image, pos)
+      if (patch) applyPatchToView(view, patch)
+    }
+  }
+}
+
+function beginThumbDrag(
+  event: PointerEvent,
+  thumb: GalleryThumb,
+  view: EditorView,
+  root: HTMLElement | null,
+  row: HTMLElement | null,
+) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  activeImageDrag = {
+    view,
+    root,
+    row,
+    imageFrom: thumb.from,
+    thumbSrc: thumb.src,
+    thumbAlt: thumb.alt,
+    pointerId: event.pointerId,
+    ghost: null,
+    zones: createImageDragZones(),
+    mode: null,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    startX: event.clientX,
+    startY: event.clientY,
+    started: false,
+  }
+  window.addEventListener('pointermove', onGalleryDragMove)
+  window.addEventListener('pointerup', onGalleryDragEnd)
+  window.addEventListener('pointercancel', onGalleryDragEnd)
+}
+
+function makeThumbDraggable(
+  img: HTMLImageElement,
+  thumb: GalleryThumb,
+  view: EditorView,
+  root: HTMLElement | null,
+  row: HTMLElement | null = null,
+) {
+  img.addEventListener('pointerdown', (event) => beginThumbDrag(event, thumb, view, root, row))
+}
+
+/**
+ * Draggable thumb strip for the reveal widget: reorder within the run, drop
+ * on the thumbnail/delete zones, or drop anywhere in the text to place the
+ * image inline — with hover ✕ remove per thumb.
+ */
+function buildGalleryThumbRow(
+  view: EditorView,
+  gallery: GalleryThumb[],
+  root: HTMLElement,
+): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'sd-gallery-thumbs'
+  row.setAttribute('aria-label', 'Gallery images — drag to reorder')
+
+  for (const thumb of gallery) {
+    const cell = document.createElement('div')
+    cell.className = 'sd-gallery-thumb'
+    const img = document.createElement('img')
+    img.src = thumb.src
+    img.alt = thumb.alt
+    img.loading = 'lazy'
+    img.decoding = 'async'
+    applyPreviewLayout(img, thumb.size, thumb.crop)
+    makeThumbDraggable(img, thumb, view, root, row)
+    cell.appendChild(img)
+
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'sd-gallery-thumb-remove'
+    remove.textContent = '✕'
+    remove.title = 'Remove image'
+    remove.setAttribute('aria-label', `Remove ${thumb.alt || 'image'}`)
+    remove.addEventListener('pointerdown', (event) => event.stopPropagation())
+    remove.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const doc = view.state.doc.toString()
+      const image = findMarkdownImages(doc).find((im) => im.from === thumb.from)
+      if (image) applyPatchToView(view, removeImageFromDoc(doc, image))
+    })
+    cell.appendChild(remove)
+    row.appendChild(cell)
+  }
+
+  return row
 }
 
 function resolveImageSrc(url: string, ownerDid: string | undefined): string | null {
@@ -86,6 +371,7 @@ function galleryThumbs(
     const src = resolveImageSrc(image.url, ownerDid)
     if (!src) continue
     thumbs.push({
+      from: image.from,
       src,
       alt: image.alt,
       current: image.from === currentFrom,
@@ -101,7 +387,12 @@ function applyPreviewLayout(img: HTMLImageElement, size: ImageSize | null, crop:
   if (crop) img.classList.add(CROP_CLASSES[crop])
 }
 
-function appendGalleryPreview(parent: HTMLElement, thumbs: GalleryThumb[], gap: ImageGap) {
+function appendGalleryPreview(
+  parent: HTMLElement,
+  thumbs: GalleryThumb[],
+  gap: ImageGap,
+  dragContext?: { view: EditorView; root: HTMLElement },
+) {
   const stage = document.createElement('div')
   stage.className =
     thumbs.length > 1 ? 'sd-image-reveal-gallery' : 'sd-image-reveal-stage'
@@ -118,6 +409,7 @@ function appendGalleryPreview(parent: HTMLElement, thumbs: GalleryThumb[], gap: 
     img.alt = thumb.alt
     img.loading = 'lazy'
     img.decoding = 'async'
+    if (dragContext) makeThumbDraggable(img, thumb, dragContext.view, dragContext.root)
     stage.appendChild(img)
   }
   parent.appendChild(stage)
@@ -163,11 +455,6 @@ function addToolbarButton(
   row.appendChild(btn)
 }
 
-/**
- * Shown while the caret is on an image line. Silkdown hides its replace-widget
- * in that state so the markdown stays editable — this keeps a live preview
- * above the `![alt](url)` text with size / order controls.
- */
 class ImageRevealWidget extends WidgetType {
   readonly src: string
   readonly alt: string
@@ -296,6 +583,33 @@ class ImageRevealWidget extends WidgetType {
 
     const layoutRow = document.createElement('div')
     layoutRow.className = 'sd-image-reveal-row'
+    if (!this.masonry) {
+      // Standalone images drag to any position in the text (pointer-based,
+      // so it works with touch too).
+      const moveBtn = document.createElement('button')
+      moveBtn.type = 'button'
+      moveBtn.className = 'sd-image-reveal-btn'
+      moveBtn.textContent = '✥'
+      moveBtn.title = 'Drag to move this image anywhere in the page'
+      moveBtn.setAttribute('aria-label', 'Drag to move this image')
+      moveBtn.addEventListener('pointerdown', (event) => {
+        beginThumbDrag(
+          event,
+          {
+            from: this.imageFrom,
+            src: this.src,
+            alt: this.alt,
+            current: false,
+            crop: this.crop,
+            size: this.size,
+          },
+          this.view,
+          wrap,
+          null,
+        )
+      })
+      layoutRow.appendChild(moveBtn)
+    }
     const masonryTitle =
       this.neighborCount > 1
         ? this.masonry
@@ -333,6 +647,10 @@ class ImageRevealWidget extends WidgetType {
     // The image itself is rendered by silkdown's own image widget (kept live
     // even while the caret is on the line), so this widget only adds controls
     // and a compact caption — no duplicate preview, no raw markdown, no shrink.
+    if (this.masonry && this.gallery.length >= 2) {
+      // Draggable thumbs with the reference editor's reorder + zone flow.
+      wrap.appendChild(buildGalleryThumbRow(this.view, this.gallery, wrap))
+    }
     if (this.masonry) {
       const status = document.createElement('div')
       status.className = 'sd-image-reveal-status'
@@ -346,7 +664,7 @@ class ImageRevealWidget extends WidgetType {
               : 'normal gap'
       status.textContent =
         this.gallery.length > 1
-          ? `Gallery · ${this.gallery.length} images · ${gapLabel}`
+          ? `Gallery · ${this.gallery.length} images · ${gapLabel} — drag a photo to reorder, drop below to delete, or into text to place it`
           : 'Gallery needs another image next to this one'
       wrap.appendChild(status)
     } else if (this.neighborCount > 1) {
@@ -387,11 +705,13 @@ class ImageRevealWidget extends WidgetType {
 class MasonryGalleryWidget extends WidgetType {
   readonly thumbs: GalleryThumb[]
   readonly gap: ImageGap
+  readonly view: EditorView | null
 
-  constructor(thumbs: GalleryThumb[], gap: ImageGap) {
+  constructor(thumbs: GalleryThumb[], gap: ImageGap, view: EditorView | null = null) {
     super()
     this.thumbs = thumbs
     this.gap = gap
+    this.view = view
   }
 
   override eq(other: MasonryGalleryWidget): boolean {
@@ -411,7 +731,12 @@ class MasonryGalleryWidget extends WidgetType {
     wrap.setAttribute('role', 'group')
     wrap.setAttribute('aria-label', `Image gallery, ${this.thumbs.length} images`)
 
-    appendGalleryPreview(wrap, this.thumbs, this.gap)
+    appendGalleryPreview(
+      wrap,
+      this.thumbs,
+      this.gap,
+      this.view ? { view: this.view, root: wrap } : undefined,
+    )
 
     const status = document.createElement('div')
     status.className = 'sd-image-reveal-status'
@@ -482,6 +807,7 @@ function buildRevealDecorations(
 function buildCollapsedMasonryDecorations(
   state: EditorState,
   ownerDid: string | undefined,
+  view: EditorView | null = null,
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
   const doc = state.doc
@@ -506,7 +832,7 @@ function buildCollapsedMasonryDecorations(
       from,
       to,
       Decoration.replace({
-        widget: new MasonryGalleryWidget(thumbs, effectiveImageGap(run[0]!.gap)),
+        widget: new MasonryGalleryWidget(thumbs, effectiveImageGap(run[0]!.gap), view),
         block: true,
       }),
     )
@@ -566,10 +892,10 @@ export function imageAlignExtension(ownerDid?: string): Extension {
 
   const masonryField = StateField.define<DecorationSet>({
     create(state) {
-      return buildCollapsedMasonryDecorations(state, ownerDid)
+      return buildCollapsedMasonryDecorations(state, ownerDid, latestView)
     },
     update(_decos, tr) {
-      return buildCollapsedMasonryDecorations(tr.state, ownerDid)
+      return buildCollapsedMasonryDecorations(tr.state, ownerDid, latestView)
     },
     provide: (field) => Prec.high(EditorView.decorations.from(field)),
   })
@@ -791,6 +1117,59 @@ export function imageAlignExtension(ownerDid?: string): Extension {
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
+      },
+      /* --- Gallery drag & drop --- */
+      '.sd-gallery-thumbs': {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '0.5rem',
+        marginTop: '0.5rem',
+        touchAction: 'none',
+      },
+      '.sd-gallery-thumb': {
+        position: 'relative',
+        cursor: 'grab',
+      },
+      '.sd-gallery-thumb:active': {
+        cursor: 'grabbing',
+      },
+      '.sd-gallery-thumb img': {
+        display: 'block',
+        width: '5.5rem',
+        height: '4.5rem',
+        objectFit: 'cover',
+        borderRadius: 'var(--pckt-radius-sm)',
+        border: '1px solid var(--pckt-border)',
+      },
+      '.sd-gallery-thumb.drop-before': {
+        boxShadow: '-3px 0 0 0 var(--pckt-blue)',
+      },
+      '.sd-gallery-thumb.drop-after': {
+        boxShadow: '3px 0 0 0 var(--pckt-blue)',
+      },
+      '.sd-gallery-thumb-remove': {
+        position: 'absolute',
+        top: '-0.4rem',
+        right: '-0.4rem',
+        width: '1.1rem',
+        height: '1.1rem',
+        display: 'none',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '0',
+        border: 'none',
+        borderRadius: '50%',
+        background: 'var(--pckt-red)',
+        color: '#fff',
+        fontSize: '0.625rem',
+        lineHeight: '1',
+        cursor: 'pointer',
+      },
+      '.sd-gallery-thumb:hover .sd-gallery-thumb-remove, .sd-image-reveal.is-dragging .sd-gallery-thumb-remove': {
+        display: 'flex',
+      },
+      '.sd-image-reveal.is-dragging': {
+        outline: '1.5px dashed color-mix(in srgb, var(--pckt-blue) 55%, transparent)',
       },
       '.sd-image-reveal-alt': {
         color: 'var(--pckt-text)',

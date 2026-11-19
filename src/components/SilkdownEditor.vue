@@ -68,7 +68,7 @@ function buildExtensions(
     infoboxTheme,
     youtubeExtension(),
     youtubeTheme,
-    ...(enableBlockDrag ? blockDragExtension() : []),
+    ...(enableBlockDrag ? blockDragExtension(ownerDid || undefined) : []),
     EditorView.updateListener.of((update) => {
       if (!update.docChanged) return
       if (update.transactions.some((tr) => tr.annotation(PROP_SYNC))) return

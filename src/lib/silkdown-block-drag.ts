@@ -13,6 +13,13 @@ import {
   reorderEditorBlocks,
   type EditorBlock,
 } from '@/lib/editor-blocks'
+import { createImageDragZones } from '@/lib/editor/drag-zones'
+import {
+  findMarkdownImages,
+  moveImageToPosition,
+  removeImageFromDoc,
+} from '@/lib/editor/image-align'
+import { isAtprotoBlobUrl, resolveBlobSrcSync } from '@/lib/atproto/blobs'
 
 const HANDLE_ICON =
   '<svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true"><circle cx="2" cy="2" r="1.5" fill="currentColor"/><circle cx="8" cy="2" r="1.5" fill="currentColor"/><circle cx="2" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="2" cy="14" r="1.5" fill="currentColor"/><circle cx="8" cy="14" r="1.5" fill="currentColor"/></svg>'
@@ -161,10 +168,37 @@ const blockDragDecorations = ViewPlugin.fromClass(
   { decorations: (value) => value.decorations },
 )
 
-const blockDragInteraction = ViewPlugin.define((view) => {
+const blockDragInteraction = (ownerDid: string | undefined) =>
+  ViewPlugin.define((view) => createBlockDragInteraction(view, ownerDid))
+
+function createBlockDragInteraction(view: EditorView, ownerDid: string | undefined) {
   let dragGhost: HTMLElement | null = null
   let draggingIndex: number | null = null
   let dropIndex: number | null = null
+  // Set while the pointer hovers the thumbnail/delete zones on an image drag.
+  let zoneMode: 'thumbnail' | 'delete' | null = null
+  let draggedImageFrom: number | null = null
+  const zones = createImageDragZones()
+
+  function imageBlockAt(blocks: EditorBlock[], index: number) {
+    const block = blocks[index]
+    if (!block) return null
+    const slice = view.state.doc.sliceString(block.start, block.end)
+    if (/^\s*$/.test(slice.replace(/!\[[^\]]*\]\([^)]*\)/g, ''))) {
+      const images = findMarkdownImages(slice)
+      if (images.length === 1) {
+        return { block, image: { ...images[0]!, offset: block.start } }
+      }
+    }
+    return null
+  }
+
+  function resolveSrc(url: string): string | null {
+    if (isAtprotoBlobUrl(url)) {
+      return resolveBlobSrcSync(url, ownerDid) ?? null
+    }
+    return /^https?:\/\//i.test(url) ? url : null
+  }
 
   function setDragState(next: BlockDragState) {
     view.dispatch({ effects: setBlockDrag.of(next) })
@@ -184,8 +218,21 @@ const blockDragInteraction = ViewPlugin.define((view) => {
   function onPointerMove(event: PointerEvent) {
     if (draggingIndex === null) return
     const blocks = parseEditorBlocks(view.state.doc.toString())
-    dropIndex = dropIndexFromPointer(view, event.clientY, blocks)
-    setDragState({ draggingIndex, dropIndex })
+
+    // Thumbnail/delete zones take priority on image-block drags.
+    if (draggedImageFrom !== null) {
+      const hit = zones.hitTest(event.clientX, event.clientY)
+      zoneMode = hit
+      zones.setTarget(hit)
+      if (hit) {
+        setDragState({ draggingIndex, dropIndex: null })
+      }
+    }
+
+    if (!zoneMode) {
+      dropIndex = dropIndexFromPointer(view, event.clientY, blocks)
+      setDragState({ draggingIndex, dropIndex })
+    }
 
     if (dragGhost) {
       const rect = dragGhost.getBoundingClientRect()
@@ -196,12 +243,41 @@ const blockDragInteraction = ViewPlugin.define((view) => {
   function onPointerUp() {
     const fromIndex = draggingIndex
     const toIndex = dropIndex
+    const mode = zoneMode
+    const imageFrom = draggedImageFrom
 
     removeGhost()
+    zones.destroy()
+    zoneMode = null
+    draggedImageFrom = null
     window.removeEventListener('pointermove', onPointerMove)
     window.removeEventListener('pointerup', onPointerUp)
     window.removeEventListener('pointercancel', onPointerUp)
     clearDragState()
+
+    // Zone drops win over block reordering.
+    if (mode && imageFrom !== null) {
+      const doc = view.state.doc.toString()
+      const image = findMarkdownImages(doc).find((item) => item.from === imageFrom)
+      if (image) {
+        if (mode === 'delete') {
+          view.dispatch({
+            changes: { from: 0, to: doc.length, insert: applyRemoval(doc, image) },
+          })
+          view.focus()
+          return
+        }
+        const patch = moveImageToPosition(doc, image, 0)
+        if (patch) {
+          view.dispatch({
+            changes: { from: patch.from, to: patch.to, insert: patch.insert },
+            selection: { anchor: patch.selectionStart, head: patch.selectionEnd },
+          })
+          view.focus()
+          return
+        }
+      }
+    }
 
     if (fromIndex === null || toIndex === null || fromIndex === toIndex) return
 
@@ -213,6 +289,11 @@ const blockDragInteraction = ViewPlugin.define((view) => {
       changes: { from: 0, to: source.length, insert: next },
     })
     view.focus()
+  }
+
+  function applyRemoval(doc: string, image: ReturnType<typeof findMarkdownImages>[number]) {
+    const removal = removeImageFromDoc(doc, image)
+    return doc.slice(0, removal.from) + doc.slice(removal.to)
   }
 
   function onHandlePointerDown(event: PointerEvent) {
@@ -236,14 +317,41 @@ const blockDragInteraction = ViewPlugin.define((view) => {
       const lineRect = view.lineBlockAt(block.start)
       const contentRect = view.contentDOM.getBoundingClientRect()
       dragGhost = document.createElement('div')
-      dragGhost.className = 'wiki-editor-block-ghost'
       dragGhost.style.width = `${contentRect.width}px`
       dragGhost.style.left = `${contentRect.left}px`
       dragGhost.style.top = `${lineRect.top}px`
-      dragGhost.textContent = view.state.doc
-        .sliceString(block.start, Math.min(block.end, block.start + 120))
-        .replace(/\s+/g, ' ')
-        .trim()
+
+      const imageHit = imageBlockAt(blocks, blockIndex)
+      if (imageHit) {
+        // Polaroid ghost for image blocks, matching the gallery drag flow.
+        const src = resolveSrc(imageHit.image.url)
+        draggedImageFrom = imageHit.block.start + imageHit.image.from
+        if (src) {
+          dragGhost.className = 'sd-image-polaroid-ghost'
+          const img = document.createElement('img')
+          img.src = src
+          img.alt = imageHit.image.alt
+          dragGhost.appendChild(img)
+        } else {
+          dragGhost.className = 'wiki-editor-block-ghost'
+          dragGhost.textContent = imageHit.image.alt || 'image'
+        }
+        // Thumbnail/delete strips appear above/below the editor while dragging.
+        zones.mount(() => {
+          const rect = view.contentDOM.getBoundingClientRect()
+          const stripHeight = 40
+          return {
+            top: new DOMRect(rect.left, rect.top - stripHeight - 6, rect.width, stripHeight),
+            bottom: new DOMRect(rect.left, rect.bottom + 6, rect.width, stripHeight),
+          }
+        })
+      } else {
+        dragGhost.className = 'wiki-editor-block-ghost'
+        dragGhost.textContent = view.state.doc
+          .sliceString(block.start, Math.min(block.end, block.start + 120))
+          .replace(/\s+/g, ' ')
+          .trim()
+      }
       document.body.appendChild(dragGhost)
     }
 
@@ -259,12 +367,13 @@ const blockDragInteraction = ViewPlugin.define((view) => {
     destroy() {
       view.dom.removeEventListener('pointerdown', onHandlePointerDown)
       removeGhost()
+      zones.destroy()
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('pointercancel', onPointerUp)
     },
   }
-})
+}
 
 export const blockDragTheme = EditorView.baseTheme({
   '.cm-block-drag-gutter': {
@@ -326,12 +435,12 @@ export const blockDragTheme = EditorView.baseTheme({
   },
 })
 
-export function blockDragExtension(): Extension[] {
+export function blockDragExtension(ownerDid?: string): Extension[] {
   return [
     blockDragState,
     blockDragGutter,
     blockDragDecorations,
-    blockDragInteraction,
+    blockDragInteraction(ownerDid),
     blockDragTheme,
   ]
 }

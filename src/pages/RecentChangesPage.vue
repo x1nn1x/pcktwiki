@@ -38,7 +38,7 @@ const changes = computed(() =>
       <header>
         <RouterLink :to="`/@${handle}/${wikiSlug}`" class="muted">← Wiki home</RouterLink>
         <h1>Recent changes</h1>
-        <p class="muted">Latest revisions in this wiki</p>
+        <p class="muted">Latest meaningful edits — one row per article</p>
       </header>
 
       <div v-if="lichen.loading" class="muted">Loading…</div>

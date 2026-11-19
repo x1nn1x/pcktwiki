@@ -21,22 +21,25 @@
   --pckt-yellow: #ffca46;
   --pckt-cream: #f4ead8;
 
-  /* Light mode — pckt.blog: bg-gray-50, text-gray-800 */
-  --pckt-bg: #f9fafb;
+  /* Light mode — Wikipedia (Vector 2022) palette: white paper, #202122 ink,
+     #3366cc links, #a2a9b1 rules. Brand red stays above for pckt chrome. */
+  --pckt-bg: #ffffff;
   --pckt-bg-elevated: #ffffff;
-  --pckt-bg-muted: #f3f4f6;
-  --pckt-bg-subtle: #e5e7eb;
-  --pckt-header-bg: var(--pckt-bg);
-  --pckt-text: #1f2937;
-  --pckt-text-muted: #6b7280;
-  --pckt-text-subtle: #9ca3af;
-  --pckt-border: #e5e7eb;
-  --pckt-border-strong: #d1d5db;
-  --pckt-accent: var(--pckt-red);
-  --pckt-accent-hover: var(--pckt-red-hover);
-  --pckt-accent-soft: rgba(255, 93, 91, 0.12);
-  --pckt-link: var(--pckt-red);
-  --pckt-danger: #ef4444;
+  --pckt-bg-muted: #f8f9fa;
+  --pckt-bg-subtle: #eaecf0;
+  --pckt-header-bg: #ffffff;
+  --pckt-text: #202122;
+  --pckt-text-muted: #54595d;
+  --pckt-text-subtle: #72777d;
+  --pckt-border: #a2a9b1;
+  --pckt-border-strong: #c8ccd1;
+  --pckt-accent: #3366cc;
+  --pckt-accent-hover: #2a4b8d;
+  --pckt-accent-soft: rgba(51, 102, 204, 0.12);
+  --pckt-link: #3366cc;
+  --pckt-link-visited: #795cb2;
+  --pckt-link-red: #d73333;
+  --pckt-danger: #d73333;
   --pckt-font-ui: 'Atkinson Hyperlegible', sans-serif;
   --pckt-font-serif: Lora, serif;
   --pckt-font-mono: 'iA Writer Mono S', monospace;
@@ -65,18 +68,25 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  /* Dark mode — pckt.blog: bg-gray-900, text-gray-100 */
-  --pckt-bg: #111827;
-  --pckt-bg-elevated: #1f2937;
-  --pckt-bg-muted: #1f2937;
-  --pckt-bg-subtle: #374151;
-  --pckt-header-bg: var(--pckt-bg);
-  --pckt-text: #f3f4f6;
-  --pckt-text-muted: rgba(255, 255, 255, 0.8);
-  --pckt-text-subtle: #9ca3af;
-  --pckt-border: #374151;
-  --pckt-border-strong: #4b5563;
-  --pckt-accent-soft: rgba(255, 93, 91, 0.18);
+  /* Dark mode — Wikipedia dark palette: deep neutral ground, #eaecf0 ink,
+     readable #6e9fff links, #54595d rules. */
+  --pckt-bg: #101418;
+  --pckt-bg-elevated: #161b22;
+  --pckt-bg-muted: #1b2027;
+  --pckt-bg-subtle: #272d35;
+  --pckt-header-bg: #101418;
+  --pckt-text: #eaecf0;
+  --pckt-text-muted: #a2a9b1;
+  --pckt-text-subtle: #72777d;
+  --pckt-border: #40464d;
+  --pckt-border-strong: #54595d;
+  --pckt-accent: #6e9fff;
+  --pckt-accent-hover: #8bb3ff;
+  --pckt-accent-soft: rgba(110, 159, 255, 0.16);
+  --pckt-link: #6e9fff;
+  --pckt-link-visited: #a79cff;
+  --pckt-link-red: #ff7e7e;
+  --pckt-danger: #ff6b6b;
   --pckt-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   --pckt-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
@@ -151,6 +161,11 @@ body {
 a {
   color: var(--pckt-link);
   text-decoration: none;
+}
+
+/* Wikipedia-style visited colour, so a long read leaves a trail. */
+a:not(.btn):not(.router-link-exact-active):visited {
+  color: var(--pckt-link-visited);
 }
 
 a:not(.btn):hover {

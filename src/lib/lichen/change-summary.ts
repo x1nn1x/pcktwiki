@@ -1,8 +1,82 @@
+import DiffMatchPatch from 'diff-match-patch'
 import { computeLineDiff } from '@/lib/lichen/visual-diff'
 import { reconstructAtRevision } from '@/lib/lichen/revisions'
 import type { LichenNoteWithContent, LichenRevisionRecord } from '@/types/lichen'
 
 export type ChangeAction = 'created' | 'edited'
+
+/**
+ * A page edit smaller than this many changed characters is housekeeping
+ * (typos, punctuation, a swapped word) and should not appear in Recent
+ * changes. Structural edits — a new section, image, or category — always
+ * count, however short the markup is.
+ */
+export const MIN_MEANINGFUL_CHARS = 40
+
+export interface ChangeAnalysis {
+  meaningful: boolean
+  created: boolean
+  addedChars: number
+  removedChars: number
+  detail: string
+}
+
+const countDmp = new DiffMatchPatch()
+
+function measureChange(oldText: string, newText: string): {
+  added: number
+  removed: number
+  addedText: string
+} {
+  const diffs = countDmp.diff_main(oldText, newText)
+  let added = 0
+  let removed = 0
+  let addedText = ''
+  for (const [operation, text] of diffs) {
+    if (operation === 1) {
+      added += text.length
+      addedText += text
+    } else if (operation === -1) {
+      removed += text.length
+    }
+  }
+  return { added, removed, addedText }
+}
+
+/**
+ * Whether an edit deserves a Recent changes row, plus a one-line description
+ * of what changed. Character-level, so fixing one letter in a long paragraph
+ * does not look like a whole-line rewrite.
+ */
+export function analyzeContentChange(oldText: string, newText: string): ChangeAnalysis {
+  const old = oldText.trim()
+  const next = newText.trim()
+  const created = !old && !!next
+  if (old === next) {
+    return {
+      meaningful: false,
+      created: false,
+      addedChars: 0,
+      removedChars: 0,
+      detail: '',
+    }
+  }
+
+  const { added, removed, addedText } = measureChange(oldText, newText)
+  const structural =
+    /^#{1,6}\s+\S/m.test(addedText) ||
+    /!\[[^\]]*\]\(/.test(addedText) ||
+    /\[\[Category:/i.test(addedText)
+  const meaningful = created || added + removed >= MIN_MEANINGFUL_CHARS || structural
+
+  return {
+    meaningful,
+    created,
+    addedChars: added,
+    removedChars: removed,
+    detail: summarizeContentDiff(oldText, newText),
+  }
+}
 
 export interface ChangeSummary {
   action: ChangeAction

@@ -10,6 +10,11 @@ import { isTalkSlug } from '@/lib/lichen/content-meta'
 import { rankSuggestions, type SuggestCandidate } from '@/lib/editor/suggest'
 import { normalizeArticleSlug } from '@/lib/atproto/lichen'
 import { useComboboxKeyboard } from '@/composables/useComboboxKeyboard'
+import {
+  headerLinkHasDestination,
+  headerLinkHref,
+  isExternalHeaderLink,
+} from '@/lib/lichen/header-links'
 import type { LichenBlobRef, LichenHeaderLink, LichenNoteWithContent } from '@/types/lichen'
 
 const props = withDefaults(
@@ -112,19 +117,11 @@ const hasAnyImage = computed(() => {
   return Object.keys(iconUrls.value).length > 0
 })
 
-/** A link may exist as a label and image before it has a destination. */
-function hasDestination(link: LichenHeaderLink): boolean {
-  return !!link.url?.trim()
-}
-
-function isExternal(url: string): boolean {
-  return /^(https?:|mailto:|tel:)/i.test(url)
-}
+const hasDestination = headerLinkHasDestination
+const isExternal = isExternalHeaderLink
 
 function internalTo(url: string): string {
-  const trimmed = url.trim().replace(/^\/+/, '')
-  if (!trimmed || trimmed === '.') return basePath.value
-  return `${basePath.value}/${trimmed}`
+  return headerLinkHref(url, basePath.value)
 }
 
 function destinationSuggestions(query: string): SuggestCandidate[] {
@@ -1264,24 +1261,6 @@ defineExpose({ commit, getLinks })
     letter-spacing: 0.01em;
     min-height: 2.75rem;
     box-sizing: border-box;
-  }
-}
-
-@media (max-width: 430px) {
-  /* iPhone mini / SE: wrap + pack tight so labels stay readable. */
-  .wiki-header-links.is-navbar {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0;
-    overflow-x: visible;
-  }
-
-  .wiki-header-links.is-navbar .header-link {
-    padding: 0.3rem 0.35rem;
-    font-size: 0.625rem;
-    letter-spacing: -0.02em;
-    font-weight: 600;
-    min-height: 2.25rem;
   }
 }
 

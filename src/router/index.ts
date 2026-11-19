@@ -14,6 +14,7 @@ import LandingPage from '@/pages/LandingPage.vue'
  */
 const LearnPage = () => import('@/pages/LearnPage.vue')
 const BrowseWikisPage = () => import('@/pages/BrowseWikisPage.vue')
+const HandleProfilePage = () => import('@/pages/HandleProfilePage.vue')
 const FaqPage = () => import('@/pages/FaqPage.vue')
 const DonatePage = () => import('@/pages/DonatePage.vue')
 const GlobalSearchPage = () => import('@/pages/GlobalSearchPage.vue')
@@ -35,6 +36,7 @@ const TimelinePage = () => import('@/pages/TimelinePage.vue')
 const GraphPage = () => import('@/pages/GraphPage.vue')
 const MapPage = () => import('@/pages/MapPage.vue')
 const RenamePage = () => import('@/pages/RenamePage.vue')
+const WikiImportPage = () => import('@/pages/WikiImportPage.vue')
 const SuggestionsPage = () => import('@/pages/SuggestionsPage.vue')
 const ForumPage = () => import('@/pages/ForumPage.vue')
 const DockButtonPage = () => import('@/pages/DockButtonPage.vue')
@@ -56,8 +58,15 @@ const router = createRouter({
     },
     {
       path: '/wikis',
+      alias: '/explore',
       name: 'browse-wikis',
       component: BrowseWikisPage,
+    },
+    {
+      // Username subdomains land here: oseanstudio.allour.wiki → /by/oseanstudio
+      path: '/by/:sub',
+      name: 'handle-profile',
+      component: HandleProfilePage,
     },
     {
       path: '/faq',
@@ -163,6 +172,11 @@ const router = createRouter({
       name: 'wiki-rename',
       component: RenamePage,
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/@:handle/:wikiSlug/special/import',
+      name: 'wiki-import',
+      component: WikiImportPage,
     },
     {
       path: '/@:handle/:wikiSlug/forum',

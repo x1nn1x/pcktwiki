@@ -9,7 +9,7 @@ import {
   THEME_REGION_FIELDS,
   THEME_REGION_LABELS,
 } from '@/types/lichen'
-import { applyWikiTheme } from '@/lib/theme'
+import { applyWikiTheme, DEFAULT_ACCENT_LIGHT } from '@/lib/theme'
 import { THEME_PRESETS } from '@/data/theme-presets'
 import ThemeColorField from '@/components/ThemeColorField.vue'
 import {
@@ -57,7 +57,7 @@ function isCustomPack(pack: ThemePack): pack is CustomPalette {
 }
 
 const accentModel = computed({
-  get: () => theme.value.accentColor ?? '#ff5d5b',
+  get: () => theme.value.accentColor ?? DEFAULT_ACCENT_LIGHT,
   set: (value: string) => updateField('accentColor', value),
 })
 

@@ -4,7 +4,15 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLichenStore } from '@/stores/lichen'
 import { useWikiEditMode } from '@/composables/useWikiEditMode'
-import { isTalkSlug, subjectSlugFromTalk } from '@/lib/lichen/content-meta'
+import { isBranchSlug } from '@/lib/lichen/branches'
+import {
+  isTalkSlug,
+  parseNoteContent,
+  subjectSlugFromTalk,
+} from '@/lib/lichen/content-meta'
+import { appUrl } from '@/lib/base-url'
+import { postWikiPageToBluesky } from '@/lib/atproto/bluesky-post'
+import { readPostToBlueskyPref } from '@/lib/bluesky-prefs'
 import WikiEditor from '@/components/WikiEditor.vue'
 import type { LichenNoteWithContent } from '@/types/lichen'
 
@@ -80,6 +88,34 @@ watch(
 )
 
 /** Returns false so a caller committing several editors can stop on failure. */
+/** Auto-post rule shared with the full editor: public wikis, owner only. */
+async function maybePostToBluesky(
+  previousContent: string,
+  nextContent: string,
+  slug: string,
+  title: string,
+): Promise<void> {
+  if (!auth.agent || !readPostToBlueskyPref()) return
+  if (!lichen.currentWiki || lichen.currentWiki.visibility !== 'public') return
+  if (lichen.currentWiki.ownerDid !== auth.did) return
+  if (isTalkSlug(slug) || isBranchSlug(slug)) return
+  const parsed = parseNoteContent(nextContent)
+  if (parsed.status === 'draft') return
+  try {
+    await postWikiPageToBluesky(auth.agent, {
+      title,
+      noteUrl: appUrl(`/@${props.ownerHandle}/${props.wikiSlug}/${slug}`),
+      wikiSlug: props.wikiSlug,
+      categories: parsed.categories,
+      previousContent,
+      nextContent,
+      sessionBlobs: editorRef.value?.getSessionBlobs() ?? new Map(),
+    })
+  } catch {
+    // The save already succeeded; a failed share should not block the page.
+  }
+}
+
 async function publish(): Promise<boolean> {
   if (!auth.agent) {
     error.value = 'Sign in to save this page'
@@ -106,12 +142,14 @@ async function publish(): Promise<boolean> {
       if (stagedLinks.length) {
         await lichen.setNoteSubheaderLinks(auth.agent, created, stagedLinks)
       }
+      await maybePostToBluesky('', body.value, created.slug, publishTitle)
       closeModal()
       // Always land on the canonical slug — the URL may still be mixed-case,
       // spaced, or otherwise un-normalized from the missing-page link.
       await router.replace(`/@${props.ownerHandle}/${props.wikiSlug}/${created.slug}`)
       return true
     } else if (props.note) {
+      const previousContent = props.note.content
       await lichen.queueOrSaveNoteEdit(
         auth.agent,
         props.note,
@@ -122,6 +160,7 @@ async function publish(): Promise<boolean> {
         props.wikiSlug,
         editorRef.value?.getContentBlobs(),
       )
+      await maybePostToBluesky(previousContent, body.value, props.note.slug, publishTitle)
     } else {
       throw new Error('Nothing to save')
     }

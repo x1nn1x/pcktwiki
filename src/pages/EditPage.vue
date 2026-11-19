@@ -15,7 +15,7 @@ import {
   subjectSlugFromTalk,
   talkSlugFor,
 } from '@/lib/lichen/content-meta'
-import { postNewWikiImagesToBluesky } from '@/lib/atproto/bluesky-post'
+import { postWikiPageToBluesky } from '@/lib/atproto/bluesky-post'
 import {
   branchNameFromSlug,
   createBranchSlug,
@@ -203,7 +203,7 @@ onUnmounted(() => {
   if (presencePoll) window.clearInterval(presencePoll)
 })
 
-async function maybePostImagesToBluesky(opts: {
+async function maybePostToBluesky(opts: {
   queued: boolean
   previousContent: string
   nextContent: string
@@ -214,14 +214,13 @@ async function maybePostImagesToBluesky(opts: {
   if (!auth.agent) return
   if (!editorRef.value?.shouldPostToBluesky()) return
   if (!showPostToBluesky.value) return
-  if (isTalkSlug(opts.noteSlug)) return
+  if (isTalkSlug(opts.noteSlug) || isBranchSlug(opts.noteSlug)) return
 
   const parsed = parseNoteContent(opts.nextContent)
   if (parsed.status === 'draft') return
 
   if (opts.queued) {
-    const msg =
-      'Note saved offline. Images were not posted to Bluesky — publish again when online.'
+    const msg = 'Note saved offline. It was not posted to Bluesky — publish again when online.'
     blueskyNotice.value = msg
     window.alert(msg)
     return
@@ -229,7 +228,9 @@ async function maybePostImagesToBluesky(opts: {
 
   try {
     const noteUrl = appUrl(`/@${handle.value}/${wikiSlug.value}/${opts.noteSlug}`)
-    await postNewWikiImagesToBluesky(auth.agent, {
+    // First publishes and substantial edits post; typo fixes are skipped
+    // inside the helper so the profile timeline stays readable.
+    await postWikiPageToBluesky(auth.agent, {
       title: opts.title,
       noteUrl,
       wikiSlug: wikiSlug.value,
@@ -278,7 +279,7 @@ async function save() {
     if (stagedLinks.length) {
       await lichen.setNoteSubheaderLinks(auth.agent, note, stagedLinks)
     }
-    await maybePostImagesToBluesky({
+    await maybePostToBluesky({
       queued: false,
       previousContent,
       nextContent,
@@ -310,7 +311,7 @@ async function save() {
     purgeOnSave.value,
   )
 
-  await maybePostImagesToBluesky({
+  await maybePostToBluesky({
     queued: result === 'queued',
     previousContent,
     nextContent,

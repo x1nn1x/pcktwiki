@@ -1,45 +1,44 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { ref, watch } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import { wikiPath } from '@/data/featured-wikis'
 import { subjectSlugFromTalk } from '@/lib/lichen/content-meta'
 import { useMenuDismissGroup } from '@/composables/useMenuDismissGroup'
 import { useOverlayDismiss } from '@/composables/useOverlayDismiss'
-import { notificationContext, notificationHeadline } from '@/lib/notifications'
-import { useWatchNotifications } from '@/composables/useWatchNotifications'
+import { useUnifiedNotifications } from '@/composables/useUnifiedNotifications'
 import { useWatchlist } from '@/composables/useWatchlist'
-import { useMemberRequestNotifications } from '@/composables/useMemberRequestNotifications'
-import { useForumNotifications } from '@/composables/useForumNotifications'
-import { listIncomingSuggestions } from '@/lib/lichen/suggestions-remote'
-import { useAuthStore } from '@/stores/auth'
-import { useLichenStore } from '@/stores/lichen'
+import { formatNotificationTime } from '@/lib/notifications'
+import type {
+  NotificationFilter,
+  UnifiedNotification,
+} from '@/lib/notifications-unified'
 import type { DiscussionWatchEntry } from '@/lib/watchlist'
-import type { WatchNotification } from '@/lib/notifications'
-
-type TabId = 'updates' | 'watching' | 'requests' | 'forum'
 
 const open = ref(false)
-const tab = ref<TabId>('updates')
 const rootRef = ref<HTMLElement | null>(null)
+const gearOpen = ref(false)
+const router = useRouter()
 
 const {
-  notifications,
+  filteredRows,
   loading,
-  unreadCount: updatesUnreadCount,
-  hasWatchlist,
-  hasNotifications,
-  loadNotifications,
-  markRead,
-  markAllRead: markAllUpdatesRead,
-  openNotification,
-  isRead,
-} = useWatchNotifications()
+  filter,
+  unreadCount,
+  unreadByFilter,
+  followBackDone,
+  followBackPending,
+  showReadingList,
+  load,
+  markAllRead,
+  followBack,
+  openRow,
+} = useUnifiedNotifications(router)
+
 
 const {
   wikis,
   discussions,
   notes,
-  unreadCount: watchingUnreadCount,
   hasWikis,
   hasDiscussions,
   hasNotes,
@@ -48,66 +47,20 @@ const {
   markWikiRead,
   markDiscussionRead,
   markNoteRead,
-  markAllRead: markAllWatchingRead,
   isWikiUnread,
   isDiscussionUnread,
   isNoteUnread,
 } = useWatchlist()
 
-const auth = useAuthStore()
-const lichen = useLichenStore()
-const {
-  totalPending: requestCount,
-  pendingByWiki,
-  loadForWikis,
-} = useMemberRequestNotifications()
+const FILTERS: Array<{ id: NotificationFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'following', label: 'People I follow' },
+  { id: 'replies', label: 'Replies' },
+  { id: 'follows', label: 'Follows' },
+  { id: 'alerts', label: 'Post alerts' },
+]
 
-const {
-  rows: forumRows,
-  unreadCount: forumUnreadCount,
-  load: loadForumNotifications,
-  markAllRead: markAllForumRead,
-} = useForumNotifications()
-
-const suggestionRows = ref<Array<{ wikiName: string; wikiSlug: string; count: number }>>([])
-const suggestionCount = ref(0)
-
-async function loadSuggestionReviews() {
-  if (!auth.agent) return
-  const rowsOut: Array<{ wikiName: string; wikiSlug: string; count: number }> = []
-  let total = 0
-  for (const wiki of ownedWikis.value) {
-    try {
-      const pending = await listIncomingSuggestions(auth.agent, wiki.uri)
-      if (pending.length) {
-        rowsOut.push({ wikiName: wiki.name, wikiSlug: wiki.slug, count: pending.length })
-        total += pending.length
-      }
-    } catch {
-      // skip unreachable wikis
-    }
-  }
-  suggestionRows.value = rowsOut
-  suggestionCount.value = total
-}
-
-const totalUnreadCount = computed(
-  () => updatesUnreadCount.value + watchingUnreadCount.value + requestCount.value + forumUnreadCount.value + suggestionCount.value,
-)
-
-const ownedWikis = computed(() =>
-  lichen.activeWikis.filter((wiki) => wiki.ownerDid === auth.did),
-)
-
-const pendingRequestRows = computed(() => {
-  const rows: Array<{ wikiName: string; wikiSlug: string; count: number }> = []
-  for (const wiki of ownedWikis.value) {
-    const count = pendingByWiki.value[wiki.uri]?.length ?? 0
-    if (!count) continue
-    rows.push({ wikiName: wiki.name, wikiSlug: wiki.slug, count })
-  }
-  return rows
-})
+const totalUnreadCount = unreadCount
 
 function close() {
   open.value = false
@@ -123,13 +76,43 @@ function toggle(event: Event) {
   open.value = !open.value
 }
 
-function setTab(next: TabId) {
-  tab.value = next
+function setFilter(next: NotificationFilter) {
+  filter.value = next
+  showReadingList.value = false
 }
 
-async function onNotificationClick(notification: WatchNotification) {
+function toggleGear(event: Event) {
+  event.stopPropagation()
+  gearOpen.value = !gearOpen.value
+}
+
+function openReadingList() {
+  showReadingList.value = true
+  gearOpen.value = false
+  void syncWatchlist()
+}
+
+function onMarkAllRead() {
+  void markAllRead()
+  gearOpen.value = false
+}
+
+function rowTime(row: UnifiedNotification): string {
+  return row.createdAt ? formatNotificationTime(row.createdAt) : ''
+}
+
+function rowMeta(row: UnifiedNotification): string {
+  const time = rowTime(row)
+  return [row.meta, time].filter(Boolean).join(' · ')
+}
+
+function onRowClick(row: UnifiedNotification) {
   close()
-  await openNotification(notification)
+  openRow(row)
+}
+
+function onFollowBack(did: string) {
+  void followBack(did)
 }
 
 function discussionMeta(entry: DiscussionWatchEntry): string {
@@ -152,40 +135,13 @@ function onNoteClick(wikiUri: string, noteSlug: string) {
   close()
 }
 
-function markAllRead() {
-  if (tab.value === 'updates') markAllUpdatesRead()
-  else if (tab.value === 'watching') markAllWatchingRead()
-}
-
 watch(open, async (isOpen) => {
-  if (!isOpen) return
-  void loadNotifications()
-  syncWatchlist()
-  if (auth.agent) {
-    if (!ownedWikis.value.length) {
-      await lichen.loadOwnerWikis(auth.agent).catch(() => {})
-    }
-    if (ownedWikis.value.length) {
-      void loadForWikis(auth.agent, ownedWikis.value)
-    }
-    void loadForumNotifications(auth.agent)
-    void loadSuggestionReviews()
+  if (!isOpen) {
+    gearOpen.value = false
+    return
   }
-})
-
-watch(tab, async (next) => {
-  if (!open.value) return
-  if (next === 'updates') void loadNotifications()
-  else if (next === 'watching') syncWatchlist()
-  else if (next === 'requests' && auth.agent) {
-    if (!ownedWikis.value.length) {
-      await lichen.loadOwnerWikis(auth.agent).catch(() => {})
-    }
-    void loadForWikis(auth.agent, ownedWikis.value)
-    void loadSuggestionReviews()
-  } else if (next === 'forum' && auth.agent) {
-    void loadForumNotifications(auth.agent)
-  }
+  void load()
+  void syncWatchlist()
 })
 </script>
 
@@ -215,137 +171,61 @@ watch(tab, async (next) => {
       </div>
 
       <header class="notif-header">
-        <div class="notif-tabs" role="tablist" aria-label="Notification views">
-          <button
-            type="button"
-            class="notif-tab"
-            role="tab"
-            :class="{ active: tab === 'updates' }"
-            :aria-selected="tab === 'updates'"
-            @click.stop="setTab('updates')"
-          >
-            Updates
-            <span v-if="updatesUnreadCount" class="notif-tab-count">{{ updatesUnreadCount }}</span>
-          </button>
-          <button
-            type="button"
-            class="notif-tab"
-            role="tab"
-            :class="{ active: tab === 'watching' }"
-            :aria-selected="tab === 'watching'"
-            @click.stop="setTab('watching')"
-          >
-            Watching
-            <span v-if="watchingUnreadCount" class="notif-tab-count notif-tab-count-watching">
-              {{ watchingUnreadCount }}
-            </span>
-          </button>
-          <button
-            v-if="auth.isAuthenticated"
-            type="button"
-            class="notif-tab"
-            role="tab"
-            :class="{ active: tab === 'requests' }"
-            :aria-selected="tab === 'requests'"
-            @click.stop="setTab('requests')"
-          >
-            Reviews
-            <span v-if="requestCount + suggestionCount" class="notif-tab-count">{{
-              requestCount + suggestionCount
-            }}</span>
-          </button>
-          <button
-            v-if="auth.isAuthenticated"
-            type="button"
-            class="notif-tab"
-            role="tab"
-            :class="{ active: tab === 'forum' }"
-            :aria-selected="tab === 'forum'"
-            @click.stop="setTab('forum')"
-          >
-            Forum
-            <span v-if="forumUnreadCount" class="notif-tab-count notif-tab-count-watching">{{
-              forumUnreadCount
-            }}</span>
-          </button>
-        </div>
-        <button
-          v-if="tab === 'updates' ? updatesUnreadCount : watchingUnreadCount"
-          type="button"
-          class="notif-mark-all"
-          @click.stop="markAllRead"
-        >
-          Mark all read
-        </button>
-      </header>
-
-      <div v-if="tab === 'updates'" role="tabpanel">
-        <div v-if="loading" class="notif-empty">
-          <p class="notif-empty-text muted">Loading updates…</p>
-        </div>
-
-        <div v-else-if="!hasWatchlist" class="notif-empty">
-          <p class="notif-empty-text muted">
-            Nothing watched yet. Tap <strong>Watch wiki</strong> to follow a whole wiki, or
-            <strong>Watch this article</strong> to follow a single page.
-          </p>
-        </div>
-
-        <div v-else-if="!hasNotifications" class="notif-empty">
-          <p class="notif-empty-text muted">No recent updates from what you're watching.</p>
-        </div>
-
-        <ul v-else class="notif-list">
-          <li
-            v-for="notification in notifications"
-            :key="notification.id"
-            class="notif-item"
-            :class="{ 'notif-item-read': isRead(notification.id) }"
-          >
+        <div class="notif-title-row">
+          <h3 class="notif-title">Notifications</h3>
+          <div class="notif-title-actions">
             <button
               type="button"
-              class="notif-link"
-              role="menuitem"
-              @click="onNotificationClick(notification)"
+              class="notif-gear"
+              aria-label="Notification options"
+              :aria-expanded="gearOpen"
+              @click.stop="toggleGear"
             >
-              <span
-                class="notif-dot"
-                :class="{ 'notif-dot-unread': !isRead(notification.id) }"
-                aria-hidden="true"
-              />
-              <span class="notif-copy">
-                <span class="notif-headline">{{ notificationHeadline(notification) }}</span>
-                <span class="notif-detail">{{ notification.detail }}</span>
-                <span class="notif-meta muted">{{ notificationContext(notification) }}</span>
-              </span>
-            </button>
-            <button
-              v-if="!isRead(notification.id)"
-              type="button"
-              class="notif-mark-read"
-              title="Mark as read"
-              aria-label="Mark as read"
-              @click.stop="markRead(notification.id)"
-            >
-              <svg class="notif-mark-read-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" class="notif-gear-icon">
                 <path
                   fill-rule="evenodd"
-                  d="M16.704 5.29a1 1 0 010 1.42l-7.25 7.25a1 1 0 01-1.42 0l-3.25-3.25a1 1 0 111.42-1.42l2.54 2.54 6.54-6.54a1 1 0 011.42 0z"
+                  d="M10 6.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7zM8.1 2.6a1 1 0 01.98-.8h1.84a1 1 0 01.98.8l.24 1.2c.42.16.81.38 1.16.65l1.16-.4a1 1 0 011.18.45l.92 1.6a1 1 0 01-.2 1.24l-.93.8a5.6 5.6 0 010 1.72l.93.8a1 1 0 01.2 1.25l-.92 1.59a1 1 0 01-1.18.45l-1.16-.4c-.35.27-.74.5-1.16.65l-.24 1.2a1 1 0 01-.98.8H9.08a1 1 0 01-.98-.8l-.24-1.2a5.06 5.06 0 01-1.16-.65l-1.16.4a1 1 0 01-1.18-.45l-.92-1.6a1 1 0 01.2-1.24l.93-.8a5.6 5.6 0 010-1.72l-.93-.8a1 1 0 01-.2-1.25l.92-1.59a1 1 0 011.18-.45l1.16.4c.35-.27.74-.5 1.16-.65l.24-1.2z"
                   clip-rule="evenodd"
                 />
               </svg>
             </button>
-          </li>
-        </ul>
+            <div v-if="gearOpen" class="notif-gear-menu" role="menu">
+              <button type="button" role="menuitem" class="notif-gear-item" @click.stop="openReadingList">
+                Reading list
+              </button>
+              <button type="button" role="menuitem" class="notif-gear-item" @click.stop="onMarkAllRead">
+                Mark all read
+              </button>
+            </div>
+          </div>
+        </div>
 
-        <footer v-if="hasWatchlist" class="notif-footer">
-          <RouterLink to="/wikis" class="notif-footer-link" @click="close">
-            Browse more wikis
-          </RouterLink>
-        </footer>
-      </div>
+        <div v-if="!showReadingList" class="notif-chips" role="tablist" aria-label="Notification filters">
+          <button
+            v-for="item in FILTERS"
+            :key="item.id"
+            type="button"
+            class="notif-chip"
+            role="tab"
+            :class="{ active: filter === item.id && !showReadingList }"
+            :aria-selected="filter === item.id && !showReadingList"
+            @click.stop="setFilter(item.id)"
+          >
+            {{ item.label }}
+            <span v-if="unreadByFilter[item.id]" class="notif-chip-count">{{
+              unreadByFilter[item.id]
+            }}</span>
+          </button>
+        </div>
+        <div v-else class="notif-chips" role="tablist" aria-label="Notification views">
+          <button type="button" class="notif-chip" role="tab" @click.stop="showReadingList = false">
+            ← Back to notifications
+          </button>
+        </div>
+      </header>
 
-      <div v-else-if="tab === 'watching'" role="tabpanel">
+      <!-- Reading list (the former Watching view) -->
+      <div v-if="showReadingList" role="tabpanel" class="notif-reading">
         <div v-if="!hasAny" class="notif-empty">
           <p class="notif-empty-text muted">
             Nothing watched yet. On a wiki page, tap <strong>Watch wiki</strong>,
@@ -380,22 +260,6 @@ watch(tab, async (next) => {
                     <span class="watch-meta muted">@{{ wiki.handle }}</span>
                   </span>
                 </RouterLink>
-                <button
-                  v-if="isWikiUnread(wiki.wikiUri)"
-                  type="button"
-                  class="watch-mark-read"
-                  title="Mark as read"
-                  aria-label="Mark as read"
-                  @click.stop="markWikiRead(wiki.wikiUri)"
-                >
-                  <svg class="watch-mark-read-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fill-rule="evenodd"
-                      d="M16.704 5.29a1 1 0 010 1.42l-7.25 7.25a1 1 0 01-1.42 0l-3.25-3.25a1 1 0 111.42-1.42l2.54 2.54 6.54-6.54a1 1 0 011.42 0z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                </button>
               </li>
             </ul>
           </section>
@@ -425,22 +289,6 @@ watch(tab, async (next) => {
                     <span class="watch-meta muted">{{ note.wikiName }}</span>
                   </span>
                 </RouterLink>
-                <button
-                  v-if="isNoteUnread(note.wikiUri, note.noteSlug)"
-                  type="button"
-                  class="watch-mark-read"
-                  title="Mark as read"
-                  aria-label="Mark as read"
-                  @click.stop="markNoteRead(note.wikiUri, note.noteSlug)"
-                >
-                  <svg class="watch-mark-read-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fill-rule="evenodd"
-                      d="M16.704 5.29a1 1 0 010 1.42l-7.25 7.25a1 1 0 01-1.42 0l-3.25-3.25a1 1 0 111.42-1.42l2.54 2.54 6.54-6.54a1 1 0 011.42 0z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                </button>
               </li>
             </ul>
           </section>
@@ -470,22 +318,6 @@ watch(tab, async (next) => {
                     <span class="watch-meta muted">{{ discussionMeta(discussion) }}</span>
                   </span>
                 </RouterLink>
-                <button
-                  v-if="isDiscussionUnread(discussion.wikiUri, discussion.noteSlug)"
-                  type="button"
-                  class="watch-mark-read"
-                  title="Mark as read"
-                  aria-label="Mark as read"
-                  @click.stop="markDiscussionRead(discussion.wikiUri, discussion.noteSlug)"
-                >
-                  <svg class="watch-mark-read-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fill-rule="evenodd"
-                      d="M16.704 5.29a1 1 0 010 1.42l-7.25 7.25a1 1 0 01-1.42 0l-3.25-3.25a1 1 0 111.42-1.42l2.54 2.54 6.54-6.54a1 1 0 011.42 0z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                </button>
               </li>
             </ul>
           </section>
@@ -501,83 +333,90 @@ watch(tab, async (next) => {
         </footer>
       </div>
 
-      <div v-else-if="tab === 'requests'" role="tabpanel">
-        <div v-if="!pendingRequestRows.length && !suggestionRows.length" class="notif-empty">
-          <p class="notif-empty-text muted">
-            No join requests or suggested edits waiting for your review.
-          </p>
+      <!-- Unified stacked feed -->
+      <div v-else role="tabpanel">
+        <div v-if="loading && !filteredRows.length" class="notif-empty">
+          <p class="notif-empty-text muted">Loading notifications…</p>
         </div>
-        <ul v-if="pendingRequestRows.length" class="notif-list">
-          <li v-for="row in pendingRequestRows" :key="`join-${row.wikiSlug}`" class="notif-item">
-            <RouterLink
-              v-if="auth.handle"
-              :to="`/@${auth.handle}/${row.wikiSlug}/settings`"
-              class="notif-link"
-              role="menuitem"
-              @click="close"
-            >
-              <span class="notif-dot notif-dot-unread" aria-hidden="true" />
-              <span class="notif-copy">
-                <span class="notif-headline">{{ row.count }} join request{{ row.count === 1 ? '' : 's' }}</span>
-                <span class="notif-meta muted">{{ row.wikiName }}</span>
-              </span>
-            </RouterLink>
-          </li>
-        </ul>
-        <ul v-if="suggestionRows.length" class="notif-list">
-          <li v-for="row in suggestionRows" :key="`sugg-${row.wikiSlug}`" class="notif-item">
-            <RouterLink
-              v-if="auth.handle"
-              :to="`/@${auth.handle}/${row.wikiSlug}/suggestions`"
-              class="notif-link"
-              role="menuitem"
-              @click="close"
-            >
-              <span class="notif-dot notif-dot-unread" aria-hidden="true" />
-              <span class="notif-copy">
-                <span class="notif-headline">{{ row.count }} suggested edit{{ row.count === 1 ? '' : 's' }}</span>
-                <span class="notif-meta muted">{{ row.wikiName }}</span>
-              </span>
-            </RouterLink>
-          </li>
-        </ul>
-      </div>
 
-      <div v-else-if="tab === 'forum'" role="tabpanel">
-        <div v-if="loading" class="notif-empty">
-          <p class="notif-empty-text muted">Checking your threads…</p>
-        </div>
-        <div v-else-if="!forumRows.length" class="notif-empty">
+        <div v-else-if="!filteredRows.length" class="notif-empty">
           <p class="notif-empty-text muted">
-            You haven't started any forum discussions yet — they live on Bluesky, and replies
-            show up here.
+            {{ filter === 'all' ? 'No notifications yet.' : `Nothing in ${filter}.` }}
           </p>
         </div>
-        <ul v-else class="notif-list">
-          <li v-for="row in forumRows" :key="row.rootPost" class="notif-item">
-            <a :href="row.bskyUrl" target="_blank" rel="noopener noreferrer" class="notif-link" role="menuitem">
-              <span
-                class="notif-dot"
-                :class="{ 'notif-dot-unread': row.replies > row.seen }"
-                aria-hidden="true"
-              />
-              <span class="notif-copy">
-                <span class="notif-headline">
-                  {{ row.replies }} repl{{ row.replies === 1 ? 'y' : 'ies' }}
-                  <template v-if="row.replies > row.seen">
-                    ({{ row.replies - row.seen }} new)
-                  </template>
+
+        <ul v-else class="notif-stack">
+          <li
+            v-for="row in filteredRows.slice(0, 30)"
+            :key="row.id"
+            class="notif-row"
+            :class="{ 'notif-row-read': row.read }"
+          >
+            <button type="button" class="notif-row-link" role="menuitem" @click="onRowClick(row)">
+              <span class="notif-row-avatars" aria-hidden="true">
+                <template v-if="row.actors.length">
+                  <img
+                    v-for="(actor, index) in row.actors.slice(0, 3)"
+                    :key="actor.did + index"
+                    class="notif-avatar"
+                    :class="{ 'notif-avatar-sm': index > 0 }"
+                    :src="actor.avatar"
+                    :alt="''"
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  />
+                  <span
+                    v-if="row.additionalCount"
+                    class="notif-avatar-more"
+                  >+{{ row.additionalCount }}</span>
+                  <span v-if="row.kind === 'follow'" class="notif-kind-icon notif-kind-follow" />
+                  <span
+                    v-else-if="row.kind === 'repost' || row.kind === 'like' || row.kind === 'quote'"
+                    class="notif-kind-icon notif-kind-engage"
+                  />
+                  <span v-else-if="row.kind === 'post-alert'" class="notif-kind-icon notif-kind-alert" />
+                </template>
+                <span v-else class="notif-kind-badge" :class="`notif-kind-badge--${row.source}`">
+                  {{ row.source === 'wiki' ? '⒲' : row.source === 'forum' ? '💬' : 'Ⓜ' }}
                 </span>
-                <span class="notif-detail">{{ row.excerpt }}…</span>
-                <span class="notif-meta muted">on Bluesky · @{{ row.author }}</span>
               </span>
-            </a>
+
+              <span class="notif-row-copy">
+                <span class="notif-row-headline">{{ row.headline }}</span>
+                <span v-if="row.detail" class="notif-row-detail">{{ row.detail }}</span>
+                <span v-if="rowMeta(row)" class="notif-row-meta muted">{{ rowMeta(row) }}</span>
+                <span
+                  v-if="row.viewAllHref"
+                  class="notif-row-viewall"
+                  @click.stop.prevent="onRowClick(row)"
+                >View all →</span>
+              </span>
+
+              <span v-if="row.thumbnail" class="notif-row-thumb" aria-hidden="true">
+                <img :src="row.thumbnail" alt="" loading="lazy" referrerpolicy="no-referrer" />
+              </span>
+              <span v-else-if="row.kind === 'follow'" class="notif-row-action">
+                <button
+                  v-for="did in row.followBackDids?.slice(0, 1) ?? []"
+                  :key="did"
+                  type="button"
+                  class="notif-follow-back"
+                  :disabled="
+                    followBackDone.has(did) || followBackPending.has(did)
+                  "
+                  @click.stop.prevent="onFollowBack(did)"
+                >
+                  {{ followBackDone.has(did) ? 'Following ✓' : 'Follow back' }}
+                </button>
+              </span>
+            </button>
           </li>
         </ul>
-        <footer v-if="forumRows.length" class="notif-footer">
-          <button type="button" class="notif-footer-link" @click.stop="markAllForumRead">
-            Mark all read
-          </button>
+
+        <footer class="notif-footer">
+          <RouterLink to="/wikis" class="notif-footer-link" @click="close">
+            Browse more wikis
+          </RouterLink>
         </footer>
       </div>
     </div>
@@ -640,234 +479,297 @@ watch(tab, async (next) => {
   text-align: center;
 }
 
-.notif.open {
-  z-index: 60;
-}
-
+/* Panel */
 .notif-panel {
   position: absolute;
   top: calc(100% + 0.5rem);
   right: 0;
   z-index: 60;
-  width: min(22rem, calc(100vw - 2rem));
-  overflow: hidden;
+  width: min(440px, calc(100vw - 20px));
+  max-height: min(70vh, 620px);
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--pckt-border);
-  border-radius: var(--pckt-radius);
+  border-radius: var(--pckt-radius-lg, 14px);
   background: var(--pckt-bg-elevated);
-  box-shadow: var(--pckt-shadow-md);
-  text-align: left;
+  box-shadow: var(--pckt-shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.18));
+  overflow: hidden;
 }
 
 .notif-strip {
   display: flex;
-  gap: 3px;
-  height: 4px;
-  padding: 0 0.25rem;
-  background: var(--pckt-bg-elevated);
+  height: 3px;
+  flex: none;
 }
 
 .notif-strip-seg {
-  flex: 1 1 0;
-  min-width: 0;
-  border-radius: 1px;
+  flex: 1;
 }
 
-.notif-strip-green {
-  background: var(--pckt-green);
-}
-
-.notif-strip-blue {
-  background: var(--pckt-blue);
-}
-
-.notif-strip-yellow {
-  background: var(--pckt-yellow);
-}
+.notif-strip-green { background: var(--pckt-green); }
+.notif-strip-blue { background: var(--pckt-blue); }
+.notif-strip-yellow { background: var(--pckt-yellow); }
 
 .notif-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem 0.5rem 0.5rem;
+  flex: none;
+  padding: 0.75rem 0.875rem 0.5rem;
   border-bottom: 1px solid var(--pckt-border);
 }
 
-.notif-tabs {
+.notif-title-row {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
-.notif-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.6rem;
-  border: none;
-  border-radius: var(--pckt-radius-sm);
-  background: transparent;
-  color: var(--pckt-text-muted);
+.notif-title {
+  margin: 0;
   font-family: var(--pckt-font-ui);
-  font-size: 0.75rem;
+  font-size: 1rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.notif-tab:hover {
-  background: var(--pckt-bg-muted);
-  color: var(--pckt-text);
+.notif-title-actions {
+  position: relative;
 }
 
-.notif-tab.active {
-  background: color-mix(in srgb, var(--pckt-green) 10%, transparent);
-  color: var(--pckt-text);
-}
-
-.notif-tab-count {
+.notif-gear {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--pckt-text-muted);
+  cursor: pointer;
+}
+
+.notif-gear:hover {
+  background: var(--pckt-bg-muted);
+  color: var(--pckt-text);
+}
+
+.notif-gear-icon {
+  width: 16px;
   height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--pckt-green) 14%, transparent);
-  color: var(--pckt-green-active);
-  font-size: 0.625rem;
-  font-weight: 800;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
-.notif-tab-count-watching {
-  background: color-mix(in srgb, var(--pckt-yellow) 18%, transparent);
-  color: color-mix(in srgb, var(--pckt-yellow) 70%, var(--pckt-text));
-}
-
-.notif-mark-all {
-  flex-shrink: 0;
-  margin-left: 0.25rem;
-  padding: 0.3rem 0.55rem;
+.notif-gear-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 10rem;
+  padding: 0.25rem;
   border: 1px solid var(--pckt-border);
   border-radius: var(--pckt-radius-sm);
-  background: var(--pckt-bg);
-  color: var(--pckt-text-muted);
-  font-family: var(--pckt-font-ui);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  line-height: 1.2;
-  cursor: pointer;
-  box-shadow: var(--pckt-shadow-xs);
-  transition:
-    background 0.15s ease,
-    color 0.15s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  background: var(--pckt-bg-elevated);
+  box-shadow: var(--pckt-shadow);
 }
 
-.notif-mark-all:hover {
-  border-color: color-mix(in srgb, var(--pckt-green) 35%, var(--pckt-border));
-  background: color-mix(in srgb, var(--pckt-green) 8%, var(--pckt-bg-elevated));
-  color: var(--pckt-green-active);
-  box-shadow: none;
-}
-
-.notif-empty {
-  padding: 1.25rem 1rem;
-}
-
-.notif-empty-text {
-  margin: 0;
-  font-family: var(--pckt-font-ui);
-  font-size: 0.8125rem;
-  line-height: 1.5;
-}
-
-.notif-list {
-  list-style: none;
-  margin: 0;
-  padding: 0.375rem 0.375rem;
-  max-height: 22rem;
-  overflow-y: auto;
-}
-
-.notif-item {
-  display: flex;
-  align-items: flex-start;
-  border-radius: var(--pckt-radius-sm);
-  transition: background 0.15s ease;
-}
-
-.notif-item:hover {
-  background: var(--pckt-bg-muted);
-}
-
-.notif-item-read .notif-headline,
-.notif-item-read .notif-detail {
-  color: var(--pckt-text-muted);
-}
-
-.notif-item-read .notif-headline {
-  font-weight: 600;
-}
-
-.notif-link {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-  flex: 1;
-  min-width: 0;
-  padding: 0.625rem 0.5rem 0.625rem 0.625rem;
+.notif-gear-item {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
   border: none;
   border-radius: var(--pckt-radius-sm);
   background: transparent;
   color: var(--pckt-text);
-  font: inherit;
+  font-family: var(--pckt-font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
 
-.notif-dot {
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  margin-top: 0.35rem;
-  border-radius: 50%;
+.notif-gear-item:hover {
+  background: var(--pckt-bg-muted);
+}
+
+/* Filter chips */
+.notif-chips {
+  display: flex;
+  gap: 0.375rem;
+  margin-top: 0.625rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 0.25rem;
+}
+
+.notif-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.notif-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.32rem 0.7rem;
+  border: 1px solid var(--pckt-border);
+  border-radius: 999px;
   background: transparent;
+  color: var(--pckt-text);
+  font-family: var(--pckt-font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
-.notif-dot-unread {
+.notif-chip:hover {
+  background: var(--pckt-bg-muted);
+}
+
+.notif-chip.active {
+  background: var(--pckt-text);
+  border-color: var(--pckt-text);
+  color: var(--pckt-bg-elevated);
+}
+
+.notif-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
   background: var(--pckt-green);
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 800;
 }
 
-.notif-copy {
+/* Stacked rows */
+.notif-stack {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.notif-row {
+  border-bottom: 1px solid var(--pckt-border);
+}
+
+.notif-row:last-child {
+  border-bottom: none;
+}
+
+.notif-row-link {
+  display: flex;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.7rem 0.875rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+.notif-row-link:hover {
+  background: var(--pckt-bg-muted);
+}
+
+.notif-row-read {
+  opacity: 0.62;
+}
+
+.notif-row-avatars {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding-top: 2px;
+}
+
+.notif-avatar {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  border: 2px solid var(--pckt-bg-elevated);
+  background: var(--pckt-bg-muted);
+  object-fit: cover;
+}
+
+.notif-avatar + .notif-avatar {
+  margin-left: -0.55rem;
+}
+
+.notif-avatar-sm {
+  width: 1.7rem;
+  height: 1.7rem;
+}
+
+.notif-avatar-more {
+  margin-left: 0.3rem;
+  font-family: var(--pckt-font-ui);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--pckt-text-muted);
+}
+
+.notif-kind-icon {
+  position: absolute;
+  left: -4px;
+  bottom: -3px;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  border: 2px solid var(--pckt-bg-elevated);
+}
+
+.notif-kind-follow {
+  background: var(--pckt-blue);
+}
+
+.notif-kind-engage {
+  background: var(--pckt-pink, var(--pckt-red));
+}
+
+.notif-kind-alert {
+  background: var(--pckt-yellow);
+}
+
+.notif-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  background: var(--pckt-bg-muted);
+  font-size: 0.95rem;
+}
+
+.notif-row-copy {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
-  min-width: 0;
+  gap: 0.1rem;
 }
 
-.notif-headline {
+.notif-row-headline {
+  font-family: var(--pckt-font-ui);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--pckt-text);
+}
+
+.notif-row-detail {
   font-family: var(--pckt-font-ui);
   font-size: 0.8125rem;
-  font-weight: 800;
-  line-height: 1.3;
-}
-
-.notif-item:hover .notif-headline {
-  color: var(--pckt-blue);
-}
-
-.notif-detail {
-  font-family: var(--pckt-font-ui);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  line-height: 1.35;
   color: var(--pckt-text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -875,193 +777,188 @@ watch(tab, async (next) => {
   overflow: hidden;
 }
 
-.notif-meta {
-  font-size: 0.6875rem;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.notif-row-meta {
+  font-family: var(--pckt-font-ui);
+  font-size: 0.75rem;
 }
 
-.notif-mark-read {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: 0.5rem 0.375rem 0 0;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--pckt-text-subtle);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.notif-mark-read:hover {
-  background: color-mix(in srgb, var(--pckt-green) 12%, transparent);
-  color: var(--pckt-green-active);
-}
-
-.notif-mark-read-icon {
-  width: 16px;
-  height: 16px;
-}
-
-.notif-footer {
-  padding: 0.5rem 0.75rem;
-  border-top: 1px solid color-mix(in srgb, var(--pckt-border) 80%, transparent);
-  text-align: center;
-}
-
-.notif-footer-watching {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.75rem 1rem;
-}
-
-.notif-footer-link {
+.notif-row-viewall {
+  display: inline-block;
+  margin-top: 0.15rem;
   font-family: var(--pckt-font-ui);
   font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--pckt-text-muted);
-  text-decoration: none;
-  transition: color 0.15s ease;
+  font-weight: 700;
+  color: var(--pckt-blue);
+  cursor: pointer;
 }
 
-.notif-footer-link:hover {
-  color: var(--pckt-text);
-  text-decoration: none;
+.notif-row-thumb {
+  flex: none;
+  width: 2.9rem;
+  height: 2.9rem;
+  border-radius: var(--pckt-radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--pckt-border);
+}
+
+.notif-row-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.notif-row-action {
+  flex: none;
+  align-self: center;
+}
+
+.notif-follow-back {
+  padding: 0.32rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--pckt-blue) 55%, var(--pckt-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pckt-blue) 8%, var(--pckt-bg-elevated));
+  color: var(--pckt-blue-active, var(--pckt-blue));
+  font-family: var(--pckt-font-ui);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.notif-follow-back:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pckt-blue) 16%, var(--pckt-bg-elevated));
+}
+
+.notif-follow-back:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Reading list (Watching view) — kept from the previous panel */
+.notif-reading {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0.875rem 0.75rem;
 }
 
 .watch-section {
-  padding: 0.375rem 0.375rem 0;
-}
-
-.watch-section + .watch-section {
-  border-top: 1px solid color-mix(in srgb, var(--pckt-border) 80%, transparent);
-  margin-top: 0.25rem;
-  padding-top: 0.5rem;
+  margin: 0 0 1rem;
 }
 
 .watch-section-title {
-  margin: 0;
-  padding: 0.25rem 0.625rem 0.375rem;
+  margin: 0 0 0.4rem;
   font-family: var(--pckt-font-ui);
   font-size: 0.6875rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  font-weight: 700;
   text-transform: uppercase;
-  color: var(--pckt-text-subtle);
-}
-
-.watch-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 14rem;
-  overflow-y: auto;
-}
-
-.watch-item {
-  display: flex;
-  align-items: flex-start;
-  border-radius: var(--pckt-radius-sm);
-  transition: background 0.15s ease;
-}
-
-.watch-item-read .watch-item-title {
-  font-weight: 600;
+  letter-spacing: 0.05em;
   color: var(--pckt-text-muted);
 }
 
-.watch-item:hover {
-  background: var(--pckt-bg-muted);
+.watch-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.watch-item {
+  border-radius: var(--pckt-radius-sm);
+}
+
+.watch-item-read {
+  opacity: 0.6;
 }
 
 .watch-link {
   display: flex;
   align-items: flex-start;
-  gap: 0.625rem;
-  flex: 1;
-  min-width: 0;
-  padding: 0.625rem 0.5rem 0.625rem 0.625rem;
-  border-radius: var(--pckt-radius-sm);
-  color: var(--pckt-text);
-  font: inherit;
-  text-align: left;
+  gap: 0.5rem;
+  padding: 0.4rem 0.35rem;
+  color: inherit;
   text-decoration: none;
 }
 
 .watch-link:hover {
-  text-decoration: none;
+  background: var(--pckt-bg-muted);
 }
 
 .watch-dot {
-  flex-shrink: 0;
+  flex: none;
   width: 8px;
   height: 8px;
-  margin-top: 0.35rem;
+  margin-top: 0.4rem;
   border-radius: 50%;
+  background: var(--pckt-border);
 }
 
 .watch-dot-unread {
-  background: var(--pckt-yellow);
-}
-
-.watch-mark-read {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: 0.5rem 0.375rem 0 0;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--pckt-text-subtle);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.watch-mark-read:hover {
-  background: color-mix(in srgb, var(--pckt-yellow) 18%, transparent);
-  color: color-mix(in srgb, var(--pckt-yellow) 70%, var(--pckt-text));
-}
-
-.watch-mark-read-icon {
-  width: 16px;
-  height: 16px;
+  background: var(--pckt-green);
 }
 
 .watch-copy {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
   min-width: 0;
 }
 
 .watch-item-title {
   font-family: var(--pckt-font-ui);
   font-size: 0.875rem;
-  font-weight: 800;
-  line-height: 1.3;
-}
-
-.watch-item:hover .watch-item-title {
-  color: var(--pckt-blue);
+  font-weight: 600;
 }
 
 .watch-meta {
+  font-family: var(--pckt-font-ui);
   font-size: 0.75rem;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.notif-empty {
+  padding: 1.75rem 1rem;
+  text-align: center;
+}
+
+.notif-empty-text {
+  margin: 0;
+  font-family: var(--pckt-font-ui);
+  font-size: 0.8125rem;
+}
+
+.notif-footer {
+  flex: none;
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem 0.875rem;
+  border-top: 1px solid var(--pckt-border);
+}
+
+.notif-footer-watching {
+  border-top: 1px solid var(--pckt-border);
+}
+
+.notif-footer-link {
+  font-family: var(--pckt-font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--pckt-blue);
+  text-decoration: none;
+}
+
+.notif-footer-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 560px) {
+  .notif-panel {
+    position: fixed;
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 76vh;
+  }
+
+  .notif-row-link {
+    padding: 0.65rem 0.7rem;
+  }
 }
 </style>

@@ -1,4 +1,5 @@
 import { FEATURED_SPOTLIGHT_HANDLES, FEATURED_WIKI_HANDLES } from '@/data/featured-wiki-catalog'
+import { assetUrl } from '@/lib/base-url'
 import { WIKI_FETCH_CONCURRENCY } from '@/lib/cache-constants'
 import { runSettledWithConcurrency } from '@/lib/concurrency'
 import { isBranchSlug } from '@/lib/lichen/branches'
@@ -72,6 +73,102 @@ const MORE_TITLE_COUNT = 6
 let cachedWikis: FeaturedWiki[] | null = null
 let cachedNotesByWiki = new Map<string, LichenNoteWithContent[]>()
 let loadPromise: Promise<FeaturedWiki[]> | null = null
+
+/**
+ * Build-time snapshot: the landing page cannot wait on one PDS round-trip per
+ * featured wiki before it can paint previews, so a committed JSON file carries
+ * the same data the network path produces. Loaded instantly, refreshed behind
+ * the scenes when it is old.
+ */
+export interface FeaturedWikiSnapshotNote {
+  slug: string
+  title: string
+  /** Body text, already stripped of markdown and clipped for card previews. */
+  text: string
+}
+
+export interface FeaturedWikiSnapshot {
+  fetchedAt: string
+  wikis: FeaturedWiki[]
+  /** Keyed by `handle:slug`. */
+  notes: Record<string, FeaturedWikiSnapshotNote[]>
+}
+
+const FEATURED_SNAPSHOT_URL = 'featured-wikis-snapshot.json'
+const FEATURED_SNAPSHOT_TTL_MS = 30 * 24 * 60 * 60 * 1000
+const SNAPSHOT_NOTE_TEXT_MAX = 600
+
+let featuredSnapshot: FeaturedWikiSnapshot | null = null
+let featuredSnapshotLoaded = false
+
+function snapshotNoteToNote(
+  key: string,
+  note: FeaturedWikiSnapshotNote,
+): LichenNoteWithContent {
+  return {
+    uri: `at://snapshot/${key}/${note.slug}`,
+    cid: '',
+    slug: note.slug,
+    title: note.title,
+    wikiRef: `at://snapshot/${key}`,
+    createdAt: '',
+    content: note.text,
+    latestRevisionUri: null,
+  }
+}
+
+/** Serializable form of whatever the network load just produced. */
+export function buildFeaturedWikiSnapshot(
+  wikis: FeaturedWiki[] = getCachedFeaturedWikis(),
+): FeaturedWikiSnapshot {
+  const notes: Record<string, FeaturedWikiSnapshotNote[]> = {}
+  for (const wiki of wikis) {
+    notes[wikiKey(wiki)] = getCachedNotes(wiki).map((note) => ({
+      slug: note.slug,
+      title: note.title,
+      text: noteBodyText(note).slice(0, SNAPSHOT_NOTE_TEXT_MAX),
+    }))
+  }
+  return { fetchedAt: new Date().toISOString(), wikis, notes }
+}
+
+function applyFeaturedWikiSnapshot(snapshot: FeaturedWikiSnapshot): FeaturedWiki[] {
+  cachedWikis = snapshot.wikis
+  cachedNotesByWiki = new Map()
+  for (const [key, notes] of Object.entries(snapshot.notes ?? {})) {
+    cachedNotesByWiki.set(key, notes.map((note) => snapshotNoteToNote(key, note)))
+  }
+  return snapshot.wikis
+}
+
+export function getFeaturedWikiSnapshot(): FeaturedWikiSnapshot | null {
+  return featuredSnapshot
+}
+
+/** Loads the committed snapshot once per session; safe to call repeatedly. */
+export async function loadFeaturedWikiSnapshot(): Promise<FeaturedWikiSnapshot | null> {
+  if (featuredSnapshotLoaded) return featuredSnapshot
+  featuredSnapshotLoaded = true
+  try {
+    const response = await fetch(assetUrl(FEATURED_SNAPSHOT_URL))
+    if (!response.ok) return null
+    const snapshot = (await response.json()) as FeaturedWikiSnapshot
+    if (!Array.isArray(snapshot?.wikis) || !snapshot.wikis.length) return null
+    const age = Date.now() - Date.parse(snapshot.fetchedAt)
+    if (Number.isNaN(age) || age > FEATURED_SNAPSHOT_TTL_MS) return null
+    featuredSnapshot = snapshot
+    return snapshot
+  } catch {
+    return null
+  }
+}
+
+/** Snapshot age in ms, or Infinity when no snapshot is loaded. */
+export function featuredSnapshotAgeMs(): number {
+  if (!featuredSnapshot) return Infinity
+  const age = Date.now() - Date.parse(featuredSnapshot.fetchedAt)
+  return Number.isNaN(age) ? Infinity : age
+}
 
 export function wikiPath(handle: string, wikiSlug: string): string {
   return `/@${encodeURIComponent(handle)}/${encodeURIComponent(wikiSlug)}`
@@ -179,6 +276,13 @@ export function findCachedFeaturedWiki(handle: string, slug: string): FeaturedWi
 export async function loadFeaturedWikis(options?: { force?: boolean }): Promise<FeaturedWiki[]> {
   if (!options?.force && cachedWikis) return cachedWikis
   if (!options?.force && loadPromise) return loadPromise
+
+  // Static snapshot first: previews paint immediately, then the caller can
+  // refresh from the network in the background.
+  if (!options?.force) {
+    const snapshot = await loadFeaturedWikiSnapshot()
+    if (snapshot) return applyFeaturedWikiSnapshot(snapshot)
+  }
 
   loadPromise = (async () => {
     const refs = listFeaturedWikiReferences()

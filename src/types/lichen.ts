@@ -258,7 +258,8 @@ export const STANDARD_PUBLICATION = 'site.standard.publication'
 export const STANDARD_DOCUMENT = 'site.standard.document'
 
 export const DEFAULT_PCKT_THEME: PcktTheme = {
-  accentColor: '#ff5d5b',
+  // Accent is left to the stylesheet so light and dark get their own
+  // Wikipedia blues. A wiki that sets accentColor overrides both.
   fontFamily: 'Lora',
   mode: 'auto',
   layoutWidth: 'medium',
@@ -273,6 +274,7 @@ export const FONT_OPTIONS = [
 ] as const
 
 export const ACCENT_PRESETS = [
+  '#3366cc',
   '#ff5d5b',
   '#58a7ff',
   '#21dc66',
@@ -284,13 +286,13 @@ export const ACCENT_PRESETS = [
 /** Neutral swatches for layout-region theming (bg / card / sidebar / header). */
 export const SURFACE_PRESETS = [
   '#ffffff',
-  '#f9fafb',
-  '#f3f4f6',
-  '#e5e7eb',
-  '#1f2937',
-  '#111827',
+  '#f8f9fa',
+  '#eaecf0',
+  '#c8ccd1',
+  '#202122',
+  '#101418',
+  '#161b22',
   '#f4ead8',
-  '#0f172a',
 ] as const
 
 export const PCKT_THEME_KEY = 'pckt.wiki.theme'

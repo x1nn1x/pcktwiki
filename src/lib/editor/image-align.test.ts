@@ -5,8 +5,11 @@ import {
   findImageAt,
   findMarkdownImages,
   moveBlockContaining,
+  moveImageToPosition,
+  moveImageWithinRun,
   parseImageAlign,
   parseImageTitle,
+  removeImageFromDoc,
   serializeImageTitle,
   setImageAlignAt,
   setImageMasonryAt,
@@ -403,5 +406,72 @@ describe('moveBlockContaining', () => {
     const doc = 'Intro\n\n![A](blob:a)\n\nOutro'
     const img = findImageAt(doc, doc.indexOf('!['))!
     expect(apply(doc, img.from, 'imageMoveUp')).toMatch(/^!\[A]/)
+  })
+})
+
+describe('moveImageWithinRun', () => {
+  it('reorders a gallery run and keeps images adjacent', () => {
+    const doc = '![A](blob:a "masonry")\n![B](blob:b "masonry")\n![C](blob:c "masonry")'
+    const run = findMarkdownImages(doc)
+    const patch = moveImageWithinRun(doc, run, run[0]!, 2)
+    expect(patch).not.toBeNull()
+    const next = doc.slice(0, patch!.from) + patch!.insert + doc.slice(patch!.to)
+    expect(next).toBe('![B](blob:b "masonry")\n![C](blob:c "masonry")\n![A](blob:a "masonry")')
+  })
+
+  it('treats the target index as post-removal order', () => {
+    const doc = '![A](blob:a "masonry")\n![B](blob:b "masonry")\n![C](blob:c "masonry")'
+    const run = findMarkdownImages(doc)
+    const patch = moveImageWithinRun(doc, run, run[0]!, 1)
+    const next = doc.slice(0, patch!.from) + patch!.insert + doc.slice(patch!.to)
+    expect(next).toBe('![B](blob:b "masonry")\n![A](blob:a "masonry")\n![C](blob:c "masonry")')
+  })
+
+  it('returns null for single-image runs and out-of-range targets', () => {
+    const doc = '![A](blob:a "masonry")'
+    const run = findMarkdownImages(doc)
+    expect(moveImageWithinRun(doc, run, run[0]!, 0)).toBeNull()
+    expect(moveImageWithinRun(doc, run, run[0]!, 3)).toBeNull()
+  })
+})
+
+describe('removeImageFromDoc', () => {
+  it('removes an image that owns its line, newline included', () => {
+    const doc = 'Intro\n\n![A](blob:a)\n\nOutro'
+    const image = findMarkdownImages(doc)[0]!
+    const patch = removeImageFromDoc(doc, image)
+    const next = doc.slice(0, patch.from) + doc.slice(patch.to)
+    expect(next).toBe('Intro\n\nOutro')
+  })
+
+  it('keeps the line when the image shares it with text', () => {
+    const doc = 'Lead ![A](blob:a) tail'
+    const image = findMarkdownImages(doc)[0]!
+    const patch = removeImageFromDoc(doc, image)
+    const next = doc.slice(0, patch.from) + doc.slice(patch.to)
+    expect(next).toBe('Lead  tail')
+  })
+})
+
+describe('moveImageToPosition', () => {
+  it('moves a gallery image into text as a standalone block', () => {
+    const doc = '![A](blob:a "masonry")\n![B](blob:b "masonry")\n\nPara one\n\nPara two'
+    const images = findMarkdownImages(doc)
+    const patch = moveImageToPosition(doc, images[0]!, doc.indexOf('Para two'))
+    expect(patch).not.toBeNull()
+    const next = patch!.insert
+    expect(next).not.toContain('"masonry")\n![B')
+    // The moved image is standalone (no masonry) and sits before Para two.
+    expect(next).toMatch(/!\[A\]\(blob:a\)\n\nPara two/)
+    expect(next).toContain('![B](blob:b "masonry")')
+  })
+
+  it('can place an image at the top of the document (thumbnail)', () => {
+    const doc = 'Intro text\n\n![A](blob:a)'
+    const image = findMarkdownImages(doc)[0]!
+    const patch = moveImageToPosition(doc, image, 0)
+    const next = patch!.insert
+    expect(next.startsWith('![A](blob:a)')).toBe(true)
+    expect(next).toContain('Intro text')
   })
 })

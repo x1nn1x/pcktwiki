@@ -19,7 +19,11 @@ import {
   uploadBlob,
 } from '@/lib/atproto/blobs'
 import { prepareImageUploadPair } from '@/lib/media/prepare-image-upload'
-import { serializeImageTitle } from '@/lib/editor/image-align'
+import {
+  serializeImageTitle,
+  serializeMarkdownImage,
+} from '@/lib/editor/image-align'
+import { imageFilesFromDrop } from '@/lib/editor/drop-files'
 import {
   collectSessionBlobsForContent,
   type SessionBlobMap,
@@ -43,7 +47,9 @@ import {
 } from '@/lib/editor/suggest'
 import { shortcutAction, type ToolbarCommand } from '@/lib/editor/toolbar'
 import { computeWikiCategories } from '@/lib/lichen/categories'
-import { isTalkSlug, talkSlugFor } from '@/lib/lichen/content-meta'
+import { isTalkSlug, parseNoteContent, talkSlugFor } from '@/lib/lichen/content-meta'
+import { readPostToBlueskyPref, writePostToBlueskyPref } from '@/lib/bluesky-prefs'
+import { setFrontmatterField } from '@/lib/lichen/frontmatter'
 import type {
   LichenApprovedMediaRecord,
   LichenHeaderLink,
@@ -107,24 +113,6 @@ const props = withDefaults(
   },
 )
 
-const POST_TO_BLUESKY_KEY = 'pckt.postImagesToBluesky'
-
-function readPostToBlueskyPref(): boolean {
-  try {
-    return localStorage.getItem(POST_TO_BLUESKY_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function writePostToBlueskyPref(value: boolean): void {
-  try {
-    localStorage.setItem(POST_TO_BLUESKY_KEY, value ? '1' : '0')
-  } catch {
-    // ignore quota / private mode
-  }
-}
-
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:title': [value: string]
@@ -184,6 +172,18 @@ const { recovered, sync, restore, dismiss, clear } = useEditorDraft(
 
 const isTalk = computed(() => isTalkSlug(props.noteSlug))
 const talkSlug = computed(() => talkSlugFor(props.noteSlug))
+
+/**
+ * Draft pages are only visible to people who can publish this wiki, so the
+ * switch lives in the editor where the owner actually writes the page.
+ */
+const isDraftPage = computed(() => parseNoteContent(props.modelValue).status === 'draft')
+const showDraftToggle = computed(() => !isTalk.value && !props.noteSlug.includes(':'))
+
+function toggleDraftPage(event: Event): void {
+  const checked = (event.target as HTMLInputElement).checked
+  emit('update:modelValue', setFrontmatterField(props.modelValue, 'status', checked ? 'draft' : null))
+}
 const titleBaseline = ref(props.title)
 const dirty = computed(
   () => props.modelValue !== baseline.value || props.title !== titleBaseline.value,
@@ -367,7 +367,14 @@ function runAction(id: EditorActionId, context: ActionContext = {}) {
   }
 }
 
-async function uploadImages(files: File[]) {
+interface UploadOptions {
+  /** Two or more images land as one masonry gallery run (folder-drop flow). */
+  asGallery?: boolean
+  /** Insert at the very top of the page — the "set as thumbnail" zone. */
+  atStart?: boolean
+}
+
+async function uploadImages(files: File[], options: UploadOptions = {}) {
   if (!auth.agent || !files.length) return
   if (!uploadsAllowed.value) {
     alertImagePolicy()
@@ -379,6 +386,7 @@ async function uploadImages(files: File[]) {
   const images = files.filter((file) => file.type.startsWith('image/'))
   if (!images.length) return
 
+  const asGallery = !!options.asGallery && images.length > 1
   uploading.value = true
   uploadError.value = ''
   uploadProgress.value = {
@@ -390,6 +398,7 @@ async function uploadImages(files: File[]) {
     // Same pattern as subheader link images: upload the blob, keep a local
     // object-URL preview, and store a portable `blob:cid` in markdown. Fresh
     // PDS uploads are not fetchable via getBlob until a record references them.
+    const galleryParts: string[] = []
     for (let index = 0; index < images.length; index += 1) {
       const file = images[index]
       uploadProgress.value = {
@@ -413,20 +422,48 @@ async function uploadImages(files: File[]) {
           thumbUrl = uploadedThumb.url
         }
 
-        applyEditorActionToView(view, 'image', {
-          url: uploaded.url,
-          alt: file.name.replace(/\.[^.]+$/, ''),
-          title:
-            serializeImageTitle({
-              thumbUrl,
-              width,
-              height,
-            }) ?? undefined,
+        const title = serializeImageTitle({
+          thumbUrl,
+          width,
+          height,
+          // Folder/multi drops become a gallery immediately (reference flow).
+          masonry: asGallery,
         })
+
+        if (asGallery) {
+          galleryParts.push(
+            serializeMarkdownImage({
+              alt: file.name.replace(/\.[^.]+$/, ''),
+              url: uploaded.url,
+              title,
+            }),
+          )
+        } else {
+          applyEditorActionToView(view, 'image', {
+            url: uploaded.url,
+            alt: file.name.replace(/\.[^.]+$/, ''),
+            title: title ?? undefined,
+          })
+        }
       } catch (err) {
         uploadError.value =
           err instanceof Error ? err.message : 'Failed to upload image'
       }
+    }
+
+    if (galleryParts.length >= 2) {
+      // Insert the whole run as one block so the gallery renders immediately.
+      const target = options.atStart ? 0 : view.state.selection.main.to
+      const before = view.state.doc.sliceString(0, target)
+      const after = view.state.doc.sliceString(target)
+      const padBefore = !options.atStart && before.trim() ? '\n\n' : ''
+      const padAfter = after.trim() ? '\n\n' : ''
+      const insert = `${padBefore}${galleryParts.join('\n')}${padAfter}`
+      view.dispatch({
+        changes: { from: target, to: target, insert },
+        selection: { anchor: target + insert.length },
+        scrollIntoView: true,
+      })
     }
     emit('update:modelValue', view.state.doc.toString())
     historyTick.value += 1
@@ -544,7 +581,7 @@ function onFilePicked(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? []).filter((file) => file.type.startsWith('image/'))
   input.value = ''
-  void uploadImages(files)
+  void uploadImages(files, { asGallery: files.length > 1 })
 }
 
 /** True when the drag payload includes files (types are available during dragover). */
@@ -592,13 +629,23 @@ function onSurfaceDragLeave(event: DragEvent) {
   surfaceDragOver.value = false
 }
 
-function onSurfaceDrop(event: DragEvent) {
+async function onSurfaceDrop(event: DragEvent) {
   claimFileDrag(event)
   surfaceDragOver.value = false
-  const files = imageFilesFromTransfer(event.dataTransfer)
+  // Expands folders dragged from the desktop (webkitGetAsEntry traversal).
+  const { files, fromFolders } = await imageFilesFromDrop(event.dataTransfer)
   if (!files.length) return
   placeCaretAtPoint(event.clientX, event.clientY)
-  void uploadImages(files)
+  void uploadImages(files, { asGallery: files.length > 1 || fromFolders })
+}
+
+/** The "set as thumbnail" strip: uploaded images land at the top of the page. */
+async function onThumbZoneDrop(event: DragEvent) {
+  claimFileDrag(event)
+  surfaceDragOver.value = false
+  const { files } = await imageFilesFromDrop(event.dataTransfer)
+  if (!files.length) return
+  void uploadImages(files, { asGallery: files.length > 1, atStart: true })
 }
 
 /** Window-level guard: file drops outside CM still must not open a new tab. */
@@ -940,12 +987,21 @@ onUnmounted(() => {
         </span>
 
         <label
+          v-if="showDraftToggle"
+          class="wiki-post-bluesky"
+          title="Draft pages are visible only to people who can publish this wiki"
+        >
+          <input type="checkbox" :checked="isDraftPage" @change="toggleDraftPage" />
+          <span>Draft page</span>
+        </label>
+
+        <label
           v-if="showPostToBluesky"
           class="wiki-post-bluesky"
-          title="Post newly added images to your Bluesky profile with wiki and category hashtags"
+          title="Post new pages and substantial edits to your Bluesky profile with wiki hashtags"
         >
           <input v-model="postToBluesky" type="checkbox" />
-          <span>Also post images to Bluesky</span>
+          <span>Post to Bluesky</span>
         </label>
 
         <button
@@ -1167,6 +1223,15 @@ onUnmounted(() => {
         @dragleave="onSurfaceDragLeave"
         @drop="onSurfaceDrop"
       >
+        <div
+          v-if="surfaceDragOver && uploadsAllowed"
+          class="wiki-editor-thumbzone"
+          @dragenter.stop.prevent
+          @dragover.stop.prevent
+          @drop.stop.prevent="onThumbZoneDrop"
+        >
+          Drop here to set as thumbnail
+        </div>
         <div
           v-if="uploading && uploadProgress"
           class="wiki-editor-upload-overlay"
@@ -1611,6 +1676,29 @@ onUnmounted(() => {
   border-color: color-mix(in srgb, var(--pckt-blue) 55%, var(--pckt-border));
   background: color-mix(in srgb, var(--pckt-blue) 6%, var(--pckt-bg-elevated));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--pckt-blue) 16%, transparent);
+}
+
+/* "Drop here to set as thumbnail" strip shown while files hover the editor. */
+.wiki-editor-thumbzone {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  right: 0.5rem;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.75rem;
+  box-sizing: border-box;
+  border: 1.5px dashed color-mix(in srgb, var(--pckt-blue) 60%, var(--pckt-border));
+  border-radius: var(--pckt-radius-btn);
+  background: color-mix(in srgb, var(--pckt-blue) 10%, var(--pckt-bg-elevated));
+  color: var(--pckt-blue-active, var(--pckt-blue));
+  font-family: var(--pckt-font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: copy;
 }
 
 .wiki-editor-surface.is-uploading {

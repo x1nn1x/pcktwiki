@@ -1,0 +1,77 @@
+{
+  "fetchedAt": "2026-11-18T08:22:30.532Z",
+  "wikis": [
+    {
+      "handle": "juprodh.me",
+      "slug": "welcome-to-lichen",
+      "name": "welcome to lichen",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#21dc66"
+    },
+    {
+      "handle": "mfzx.net",
+      "slug": "at-protocol-paper-errata-and-details",
+      "name": "at protocol paper errata and details",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#58a7ff"
+    },
+    {
+      "handle": "stellapent.wiki",
+      "slug": "stellapent-cier-community-wiki",
+      "name": "stellapent cier community wiki",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#ff5d5b"
+    },
+    {
+      "handle": "rechargednintendo.eurosky.social",
+      "slug": "florets-retreat",
+      "name": "florets retreat",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#ff5d5b"
+    },
+    {
+      "handle": "windfreaker.dev",
+      "slug": "digital-garden",
+      "name": "digital garden",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#21dc66"
+    },
+    {
+      "handle": "myrkvi.no",
+      "slug": "test",
+      "name": "test",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#21dc66"
+    },
+    {
+      "handle": "oseanstudio.bsky.social",
+      "slug": "oseanworld",
+      "name": "oseanworld",
+      "description": "A public wiki on Lichen.",
+      "language": "EN",
+      "noteCount": 0,
+      "accentColor": "#58a7ff"
+    }
+  ],
+  "notes": {
+    "juprodh.me:welcome-to-lichen": [],
+    "mfzx.net:at-protocol-paper-errata-and-details": [],
+    "stellapent.wiki:stellapent-cier-community-wiki": [],
+    "rechargednintendo.eurosky.social:florets-retreat": [],
+    "windfreaker.dev:digital-garden": [],
+    "myrkvi.no:test": [],
+    "oseanstudio.bsky.social:oseanworld": []
+  }
+}

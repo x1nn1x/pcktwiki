@@ -574,6 +574,124 @@ export function setImageGapAt(
 }
 
 /**
+ * Move one image of a consecutive run to another slot in the same run.
+ * The run is rebuilt with uniform single-newline separators so gallery runs
+ * stay adjacent — this is what gallery-thumb drag-and-drop calls on drop.
+ */
+export function moveImageWithinRun(
+  doc: string,
+  run: MarkdownImage[],
+  image: MarkdownImage,
+  targetIndex: number,
+): EditPatch | null {
+  if (run.length < 2) return null
+  const fromIdx = run.findIndex((item) => item.from === image.from && item.to === image.to)
+  if (fromIdx < 0 || targetIndex < 0 || targetIndex >= run.length || targetIndex === fromIdx) {
+    return null
+  }
+
+  const ordered = [...run]
+  ordered.splice(fromIdx, 1)
+  ordered.splice(targetIndex, 0, image)
+
+  const insert = ordered
+    .map((item) => doc.slice(item.from, item.to))
+    .join('\n')
+
+  return {
+    from: run[0]!.from,
+    to: run[run.length - 1]!.to,
+    insert,
+    // Keep the caret on the moved image inside the rebuilt run.
+    selectionStart: run[0]!.from,
+    selectionEnd: run[0]!.from,
+  }
+}
+
+/** Line-spanning range that removes an image and any line it has to itself. */
+export function removeImageFromDoc(doc: string, image: MarkdownImage): EditPatch {
+  const lineStart = lineStartAt(doc, image.from)
+  const lineEnd = lineEndAt(doc, image.to)
+  const onlyImageOnLine = /^\s*$/.test(doc.slice(lineStart, image.from) + doc.slice(image.to, lineEnd))
+  let from = image.from
+  let to = image.to
+  if (onlyImageOnLine) {
+    from = lineStart
+    to = Math.min(doc.length, lineEnd + 1) // swallow the newline too
+    // Collapse a leftover blank paragraph: swallow one preceding newline when
+    // the image sat between blank lines (…\n\n![img](…)\n…).
+    if (from >= 2 && doc[from - 1] === '\n' && doc[from - 2] === '\n') {
+      from -= 1
+    }
+  }
+  return { from, to, insert: '', selectionStart: from, selectionEnd: from }
+}
+
+/** Standalone copy of an image's markdown — gallery meta stripped. */
+export function standaloneImageMarkdown(image: MarkdownImage): string {
+  const meta = parseImageTitle(image.title)
+  return serializeMarkdownImage({
+    alt: image.alt,
+    url: image.url,
+    title: meta.isCaption
+      ? null
+      : serializeImageTitle({
+          align: meta.align,
+          size: meta.size,
+          crop: meta.crop,
+          thumbUrl: meta.thumbUrl,
+          width: meta.width,
+          height: meta.height,
+        }),
+  })
+}
+
+/**
+ * Move an image to an arbitrary document position (gallery → text placement).
+ * The source range is removed first; `to` is a position in the *original* doc
+ * and is re-clamped after removal.
+ */
+export function moveImageToPosition(
+  doc: string,
+  image: MarkdownImage,
+  to: number,
+  markdownOverride?: string,
+): EditPatch | null {
+  const removal = removeImageFromDoc(doc, image)
+  const insertText = markdownOverride ?? standaloneImageMarkdown(image)
+  if (!insertText) return null
+
+  // Re-clamp the target against the post-removal document.
+  let target = to
+  if (target > removal.from) {
+    target -= removal.to - removal.from
+    if (to <= removal.to) target = removal.from
+  }
+  target = Math.max(0, Math.min(doc.length - (removal.to - removal.from), target))
+
+  const next = doc.slice(0, removal.from) + doc.slice(removal.to)
+  // Pad with blank lines so the image lands as its own block.
+  let insert = insertText
+  const before = next.slice(0, target)
+  const after = next.slice(target)
+  if (before.trim() && !/\n\n$/.test(before)) {
+    insert = (before.endsWith('\n') ? '\n' : '\n\n') + insert
+  }
+  if (after.trim() && !/^\n\n/.test(after)) {
+    insert += after.startsWith('\n') ? '\n' : '\n\n'
+  }
+
+  const finalFrom = removal.from
+  return {
+    from: 0,
+    to: next.length,
+    insert: next.slice(0, target) + insert + next.slice(target),
+    selectionStart: finalFrom + target + (before.trim() ? (before.endsWith('\n') ? 1 : 2) : 0),
+    selectionEnd: finalFrom + target + (before.trim() ? (before.endsWith('\n') ? 1 : 2) : 0),
+  }
+}
+
+/**
  * Move the top-level block that contains `pos` by one slot among movable blocks.
  * Returns null when there is nowhere to move.
  */

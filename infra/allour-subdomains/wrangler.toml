@@ -1,0 +1,9 @@
+name = "allour-subdomains"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Wildcard DNS (*.allour.wiki, proxied) must exist first — see README.md.
+# Add a second route for *.pckt.wiki if that zone is on the same account.
+routes = [
+  { pattern = "*.allour.wiki/*", zone_name = "allour.wiki" }
+]

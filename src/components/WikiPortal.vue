@@ -124,6 +124,9 @@ function setTemplate(id: string | null) {
         <li>
           <RouterLink :to="`/@${ownerHandle}/${wikiSlug}/special/map`">Map</RouterLink>
         </li>
+        <li>
+          <RouterLink :to="`/@${ownerHandle}/${wikiSlug}/special/import`">Import</RouterLink>
+        </li>
       </ul>
     </WikiPortalBox>
 

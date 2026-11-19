@@ -1,4 +1,5 @@
 import { RichText, type Agent } from '@atproto/api'
+import DiffMatchPatch from 'diff-match-patch'
 
 import {
   blobCid,
@@ -12,16 +13,35 @@ import { findMarkdownImages } from '@/lib/editor/image-align'
 
 const HTML_IMAGE_RE = /<img[^>]+src=["']([^"']+)["']/gi
 const MAX_IMAGES_PER_POST = 4
+/** Edits smaller than this (inserted+deleted characters) do not post. */
+const MEANINGFUL_EDIT_CHARS = 280
 
 export function toHashtag(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-/** Wiki slug first, then categories. Deduped; empty tags dropped. */
+/**
+ * The one tag every wiki post carries, derived from the deployment host:
+ * allour.wiki → `allourwiki`, pckt.wiki → `pcktwiki`. Forks get their own
+ * aggregation tag without changing code, and readers can follow it to see
+ * pages from every author on the same instance.
+ */
+export function siteHashtag(): string {
+  try {
+    const host = new URL(__SITE_URL__).hostname.replace(/^www\./, '')
+    const labels = host.split('.').filter(Boolean)
+    const name = labels.length >= 2 ? labels[labels.length - 2] : labels[0]
+    return toHashtag(name || host) || 'wiki'
+  } catch {
+    return 'wiki'
+  }
+}
+
+/** Site tag first, then wiki slug and categories. Deduped; empty tags dropped. */
 export function buildPublishHashtags(wikiSlug: string, categories: string[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
-  for (const label of [wikiSlug, ...categories]) {
+  for (const label of [siteHashtag(), wikiSlug, ...categories]) {
     const tag = toHashtag(label)
     if (!tag || seen.has(tag)) continue
     seen.add(tag)
@@ -170,6 +190,107 @@ export function buildPostText(title: string, noteUrl: string, hashtags: string[]
     lines.push(hashtags.map((tag) => `#${tag}`).join(' '))
   }
   return lines.filter(Boolean).join('\n')
+}
+
+/**
+ * True when an edit is big enough to be worth a Bluesky post. Character-level
+ * diff, so moving a paragraph around (same text, new order) still counts but a
+ * typo fix does not.
+ */
+export function hasMeaningfulContentChange(previous: string, next: string): boolean {
+  if (previous === next) return false
+  if (!previous.trim()) return !!next.trim()
+
+  const dmp = new DiffMatchPatch()
+  const diffs = dmp.diff_main(previous, next)
+  let changed = 0
+  for (const [operation, text] of diffs) {
+    if (operation !== 0) changed += text.length
+  }
+  return changed >= MEANINGFUL_EDIT_CHARS
+}
+
+/** Plain-text excerpt for the Bluesky link card. */
+export function postDescription(markdown: string, max = 180): string {
+  const text = markdown
+    .replace(/^---[\s\S]*?---\s*/, '')
+    .replace(/\{\{[^}]*\}\}/g, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+    .replace(/\[\[([^|\]]+)(?:\|([^\]]+))?\]\]/g, (_m, target, label) => label ?? target)
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[`*_~>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text.length <= max) return text
+  const clipped = text.slice(0, max)
+  const lastSpace = clipped.lastIndexOf(' ')
+  return `${(lastSpace > max * 0.6 ? clipped.slice(0, lastSpace) : clipped).trim()}…`
+}
+
+/**
+ * Post a wiki page to Bluesky: title, canonical link, and the shared hashtag
+ * scheme. New images from the edit ride along when there are any; otherwise the
+ * page becomes a link card.
+ */
+export async function postWikiPageToBluesky(
+  agent: Agent,
+  opts: {
+    title: string
+    noteUrl: string
+    wikiSlug: string
+    categories: string[]
+    previousContent: string
+    nextContent: string
+    sessionBlobs: SessionBlobMap
+  },
+): Promise<{ uris: string[]; skipped: boolean }> {
+  const hashtags = buildPublishHashtags(opts.wikiSlug, opts.categories)
+  const newUrls = diffNewImageUrls(opts.previousContent, opts.nextContent)
+  const images = newUrls.length
+    ? await resolveImageBlobsForPost(agent, newUrls, opts.sessionBlobs).catch(() => [])
+    : []
+  if (!images.length && !hasMeaningfulContentChange(opts.previousContent, opts.nextContent)) {
+    return { uris: [], skipped: true }
+  }
+
+  const text = buildPostText(opts.title, opts.noteUrl, hashtags)
+  const rt = new RichText({ text })
+  rt.detectFacetsWithoutResolution()
+
+  const uris: string[] = []
+  if (images.length) {
+    for (const chunk of chunkArray(images, MAX_IMAGES_PER_POST)) {
+      const result = await agent.post({
+        text: rt.text,
+        facets: rt.facets,
+        embed: {
+          $type: 'app.bsky.embed.images',
+          images: chunk.map((image) => ({
+            alt: image.alt,
+            image: image.blob as never,
+          })),
+        },
+      })
+      uris.push(result.uri)
+    }
+    return { uris, skipped: false }
+  }
+
+  const result = await agent.post({
+    text: rt.text,
+    facets: rt.facets,
+    embed: {
+      $type: 'app.bsky.embed.external',
+      external: {
+        uri: opts.noteUrl,
+        title: opts.title,
+        description: postDescription(opts.nextContent),
+      },
+    },
+  })
+  uris.push(result.uri)
+  return { uris, skipped: false }
 }
 
 export async function createImagePosts(

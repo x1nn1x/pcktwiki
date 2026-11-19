@@ -21,6 +21,8 @@ const props = defineProps<{
   ownerHandle?: string
   ownerDid?: string
   wikiNotes?: LichenNoteWithContent[]
+  /** Base heading-slug counts from an earlier chunk of the same article. */
+  headingIdCounts?: Map<string, number>
   /** When true, headings get a Wikipedia-style section Edit control. */
   canEdit?: boolean
 }>()
@@ -61,6 +63,7 @@ const html = computed(() => {
     ownerDid: props.ownerDid,
     existingSlugs: existingSlugs.value,
     wikiNotes: props.wikiNotes,
+    headingIdCounts: props.headingIdCounts,
   })
 })
 
@@ -322,7 +325,7 @@ onMounted(() => {
 
 <style scoped>
 :deep(.wikilink) {
-  color: var(--pckt-red);
+  color: var(--pckt-blue);
   font-weight: 600;
   text-decoration: none;
 }
@@ -331,9 +334,11 @@ onMounted(() => {
   text-decoration: underline;
 }
 
+/* Wiki convention (as on Wikipedia): blue links exist; red + dashed means
+   the page doesn't exist yet and is waiting to be written. */
 :deep(.wikilink-missing) {
-  color: var(--pckt-text-muted);
-  border-bottom: 1px dashed var(--pckt-text-muted);
+  color: var(--pckt-red);
+  border-bottom: 1px dashed var(--pckt-red);
 }
 
 :deep(.wiki-section-edit) {

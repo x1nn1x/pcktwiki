@@ -6,6 +6,28 @@ import type { ThemePack } from '@/types/theme-pack'
  */
 export const THEME_PRESETS: ThemePack[] = [
   {
+    name: 'Wikipedia',
+    accent: '#3366cc',
+    bg: '#ffffff',
+    card: '#ffffff',
+    sidebar: '#f8f9fa',
+    header: '#ffffff',
+    font: 'Lora',
+    layoutWidth: 'default',
+    wikiLightDark: 'light',
+  },
+  {
+    name: 'Wikipedia dark',
+    accent: '#6e9fff',
+    bg: '#101418',
+    card: '#161b22',
+    sidebar: '#1b2027',
+    header: '#101418',
+    font: 'Lora',
+    layoutWidth: 'default',
+    wikiLightDark: 'dark',
+  },
+  {
     name: 'Classic pckt',
     accent: '#ff5d5b',
     bg: '#f9fafb',

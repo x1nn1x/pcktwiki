@@ -64,7 +64,10 @@ watch(
       :src="displayUrl"
       :alt="name"
       class="wiki-avatar-image"
+      :width="size"
+      :height="size"
       :loading="loading"
+      :fetchpriority="loading === 'eager' ? 'high' : 'auto'"
       decoding="async"
       @error="imageFailed = true"
     />

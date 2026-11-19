@@ -57,10 +57,7 @@ const basePath = computed(
   () => `/@${encodeURIComponent(props.ownerHandle)}/${encodeURIComponent(props.wikiSlug)}`,
 )
 
-const navPagesRef = ref<HTMLDetailsElement | null>(null)
 const navListRef = ref<HTMLElement | null>(null)
-let navPagesMq: MediaQueryList | undefined
-let syncNavPagesOpen: (() => void) | undefined
 
 function sameOrder(a: string[] | undefined, b: string[] | undefined): boolean {
   const left = a ?? []
@@ -226,12 +223,6 @@ watch(orderedNotes, () => {
 })
 
 onMounted(() => {
-  navPagesMq = window.matchMedia('(min-width: 769px)')
-  syncNavPagesOpen = () => {
-    if (navPagesRef.value) navPagesRef.value.open = navPagesMq!.matches
-  }
-  syncNavPagesOpen()
-  navPagesMq.addEventListener('change', syncNavPagesOpen)
   if (editMode.active.value && props.canManage) {
     beginDraft()
     editMode.registerCommit(COMMIT_ID, commitSidebarOrder)
@@ -240,9 +231,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (navPagesMq && syncNavPagesOpen) {
-    navPagesMq.removeEventListener('change', syncNavPagesOpen)
-  }
   if (navListRef.value) drag.detachHandles(navListRef.value)
   editMode.unregisterCommit(COMMIT_ID)
 })
@@ -255,8 +243,10 @@ onUnmounted(() => {
       <RouterLink :to="`${basePath}/search`" class="nav-tool">Search</RouterLink>
     </div>
 
-    <details ref="navPagesRef" class="wiki-nav-pages">
-      <summary class="wiki-nav-pages-summary">Pages</summary>
+    <!-- Wikipedia renders sidebar sections as a plain heading over a link
+         list — no collapsible button chrome, on desktop or mobile. -->
+    <section class="wiki-nav-pages">
+      <h2 class="wiki-nav-heading">Pages</h2>
       <div
         ref="navListRef"
         class="wiki-nav"
@@ -341,7 +331,7 @@ onUnmounted(() => {
           {{ displayLabel(note) }}
         </button>
       </div>
-    </details>
+    </section>
   </nav>
 </template>
 
@@ -383,24 +373,15 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.wiki-nav-pages-summary {
-  cursor: pointer;
-  list-style: none;
+.wiki-nav-heading {
+  margin: 0;
   padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--pckt-border);
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--pckt-text-muted);
-  border-bottom: 1px solid transparent;
-}
-
-.wiki-nav-pages-summary::-webkit-details-marker {
-  display: none;
-}
-
-.wiki-nav-pages[open] > .wiki-nav-pages-summary {
-  border-bottom-color: var(--pckt-border);
 }
 
 .wiki-nav {
@@ -540,11 +521,5 @@ onUnmounted(() => {
 .wiki-nav-add-plus {
   color: var(--pckt-blue);
   font-weight: 700;
-}
-
-@media (min-width: 769px) {
-  .wiki-nav-pages-summary {
-    display: none;
-  }
 }
 </style>

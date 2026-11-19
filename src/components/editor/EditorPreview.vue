@@ -67,21 +67,14 @@ function onClick(event: MouseEvent) {
 }
 
 .ep-body :deep(.wikilink) {
-  color: var(--pckt-red);
+  color: var(--pckt-blue);
   font-weight: 600;
 }
 
-/* Wiki convention: links to pages that do not exist yet read as "to write". */
+/* Wiki convention (as on Wikipedia): blue links exist; red + dashed means
+   the page doesn't exist yet and is waiting to be written. */
 .ep-body :deep(.wikilink-missing) {
-  color: var(--pckt-text-muted);
-  text-decoration: underline dotted;
-  text-underline-offset: 0.2em;
-}
-
-.ep-body :deep(.wikilink-missing)::after {
-  content: '?';
-  font-size: 0.75em;
-  vertical-align: super;
-  color: var(--pckt-accent);
+  color: var(--pckt-red);
+  border-bottom: 1px dashed var(--pckt-red);
 }
 </style>

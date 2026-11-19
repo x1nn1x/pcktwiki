@@ -130,35 +130,83 @@ function siteConfigPlugin(): Plugin {
  * Dev-only: point identity resolution at a local mock PDS so a local preview
  * can serve draft records. Enabled by setting VITE_DEV_MOCK_PDS to the mock's
  * base URL (e.g. http://127.0.0.1:8790). Everything the app reads (wiki, notes,
- * revisions, blobs) then comes from that server; only the two identity hops —
- * handle → DID (public.api.bsky.app) and DID → PDS (plc.directory) — need
- * redirecting, which this injected bootstrap does.
+ * revisions, blobs) then comes from that server; only the two identity hops for
+ * the mock's own account — handle → DID (public.api.bsky.app) and DID → PDS
+ * (plc.directory) — are redirected by the injected bootstrap. The mock's DID
+ * and handle are read from its own /did.json at server start: redirecting
+ * lookups for any OTHER identity would resolve every DID doc on the network to
+ * the mock, poisoning the handle/DID caches until a random user's profile
+ * (avatar and bio included) is painted onto the preview.
  */
 function mockPdsPlugin(): Plugin {
   const mockUrl = siteEnv.VITE_DEV_MOCK_PDS?.trim()
   if (!mockUrl) return { name: 'mock-pds-disabled' }
 
+  type MockIdentity = { did: string; handle: string | null }
+  let identity: MockIdentity | null = null
+  let identityPromise: Promise<MockIdentity | null> | null = null
+
+  function loadIdentity(): Promise<MockIdentity | null> {
+    if (identity) return Promise.resolve(identity)
+    if (!identityPromise) {
+      identityPromise = (async () => {
+        try {
+          const response = await fetch(`${mockUrl}/did.json`, {
+            signal: AbortSignal.timeout(5_000),
+          })
+          if (!response.ok) return null
+          const doc = (await response.json()) as { id?: string; alsoKnownAs?: string[] }
+          if (!doc.id) return null
+          const alias = doc.alsoKnownAs?.find((entry) => entry.startsWith('at://'))
+          identity = {
+            did: doc.id,
+            handle: alias ? alias.slice('at://'.length).toLowerCase() : null,
+          }
+          return identity
+        } catch {
+          return null
+        }
+      })()
+    }
+    return identityPromise
+  }
+
   return {
     name: 'mock-pds',
     transformIndexHtml: {
       order: 'pre',
-      handler(html) {
+      handler: async (html) => {
+        const mock = await loadIdentity()
+        // Mock unreachable: no redirect, the app just talks to the real network.
+        if (!mock) return html
+
         const bootstrap = `<script>(function () {
   var MOCK = ${JSON.stringify(mockUrl)}
+  var DID = ${JSON.stringify(mock.did)}
+  var HANDLE = ${JSON.stringify(mock.handle ?? '')}
   var orig = window.fetch.bind(window)
   window.fetch = function (input, init) {
     try {
       var url = typeof input === 'string' ? input : (input && input.url) || ''
       if (url.indexOf('https://plc.directory/') === 0) {
-        return orig(MOCK + '/did.json', init)
+        // Only the mock's own document lives here; every other DID resolves
+        // against the real directory.
+        var asked = decodeURIComponent(url.slice('https://plc.directory/'.length).split(/[?#]/)[0])
+        if (asked === DID) return orig(MOCK + '/did.json', init)
+        return orig(input, init)
       }
-      if (url.indexOf('com.atproto.identity.resolveHandle') !== -1) {
-        return orig(MOCK + url.replace(/^https?:\\/\\/[^/]+/, ''), init)
+      if (HANDLE && url.indexOf('com.atproto.identity.resolveHandle') !== -1) {
+        var match = /[?&]handle=([^&]+)/.exec(url)
+        var handle = match ? decodeURIComponent(match[1]).replace(/^@/, '').toLowerCase() : ''
+        if (handle === HANDLE) {
+          return orig(MOCK + '/xrpc/com.atproto.identity.resolveHandle?handle=' + encodeURIComponent(HANDLE), init)
+        }
+        return orig(input, init)
       }
     } catch (e) {}
     return orig(input, init)
   }
-  console.info('[mock-pds] dev reads served from ' + MOCK)
+  console.info('[mock-pds] dev reads for ' + HANDLE + ' served from ' + MOCK)
 })()</script>`
         return html.replace('<head>', '<head>\n    ' + bootstrap)
       },

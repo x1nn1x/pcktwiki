@@ -48,7 +48,7 @@ function normalizeMode(value: unknown): ThemePack['wikiLightDark'] {
 export function themeToPack(theme: PcktTheme, name = 'Custom theme'): ThemePack {
   return {
     name,
-    accent: theme.accentColor ?? '#ff5d5b',
+    accent: theme.accentColor ?? '#3366cc',
     bg: theme.bgColor,
     card: theme.cardColor,
     sidebar: theme.sidebarColor,

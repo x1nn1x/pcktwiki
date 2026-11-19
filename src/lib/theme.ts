@@ -18,15 +18,26 @@ function setOrClear(root: HTMLElement, prop: string, value: string | undefined |
   else root.style.removeProperty(prop)
 }
 
+export const DEFAULT_ACCENT_LIGHT = '#3366cc'
+
 export function applyWikiTheme(theme?: PcktTheme): void {
   const merged = { ...DEFAULT_PCKT_THEME, ...theme }
   const root = document.documentElement
 
-  const accent = merged.accentColor ?? DEFAULT_PCKT_THEME.accentColor!
-  root.style.setProperty('--pckt-accent', accent)
-  root.style.setProperty('--pckt-accent-hover', accentHover(accent))
-  root.style.setProperty('--pckt-link', accent)
-  root.style.setProperty('--pckt-accent-soft', hexToRgba(accent, 0.12))
+  // No explicit accent means the stylesheet owns it, so light and dark mode
+  // each get their own readable blue (Wikipedia #3366cc / #6e9fff).
+  const accent = merged.accentColor
+  if (accent) {
+    root.style.setProperty('--pckt-accent', accent)
+    root.style.setProperty('--pckt-accent-hover', accentHover(accent))
+    root.style.setProperty('--pckt-link', accent)
+    root.style.setProperty('--pckt-accent-soft', hexToRgba(accent, 0.12))
+  } else {
+    root.style.removeProperty('--pckt-accent')
+    root.style.removeProperty('--pckt-accent-hover')
+    root.style.removeProperty('--pckt-link')
+    root.style.removeProperty('--pckt-accent-soft')
+  }
   root.style.setProperty('--pckt-font-content', contentFontStack(merged.fontFamily))
 
   setOrClear(root, '--pckt-bg', merged.bgColor)

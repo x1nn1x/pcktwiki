@@ -4,6 +4,7 @@ import type Token from 'markdown-it/lib/token.mjs'
 import DOMPurify from 'dompurify'
 import { resolveBlobSrcSync, getSessionBlobPreview } from '@/lib/atproto/blobs'
 import { cropAspectRatio, parseImageTitle } from '@/lib/editor/image-align'
+import { responsiveImage } from '@/lib/media/responsive-image'
 import {
   parseWikilinkTarget,
   wikilinkHref,
@@ -35,6 +36,12 @@ export interface MarkdownRenderEnv {
    * for a static site export).
    */
   resolveHref?: (target: WikilinkTarget | { kind: 'category'; name: string; slug: string }) => string | null
+  /**
+   * Base heading-slug counts from an earlier chunk of the same article, so a
+   * second render continues the same id dedupe sequence (`heading`,
+   * `heading-2`, …) instead of restarting it.
+   */
+  headingIdCounts?: Map<string, number>
 }
 
 const md = new MarkdownIt({
@@ -72,6 +79,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   // Always use the full blob in article bodies. Compact `thumb:` blobs are
   // reserved for LQIP placeholders and small UI (search, media grid).
   const fullSrc = rewrite(src)
+  const responsive = responsiveImage(fullSrc)
   const thumbSrc = titleMeta.thumbUrl ? rewrite(titleMeta.thumbUrl) : null
   const hasDims = !!(titleMeta.width && titleMeta.height)
   const alignClass = titleMeta.align ? ` md-img--${titleMeta.align}` : ''
@@ -105,16 +113,23 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
         ? `<img class="md-img-lqip" src="${escapeHtml(thumbSrc)}" alt="" aria-hidden="true" decoding="async" />`
         : ''
     const dimAttrs = w && h ? `width="${w}" height="${h}" ` : ''
+    const srcSetAttrs = responsive.srcSet
+      ? `srcset="${escapeHtml(responsive.srcSet)}" sizes="${escapeHtml(responsive.sizes ?? '')}" `
+      : ''
     return (
       `<span class="md-img-frame${alignClass}${sizeClass}${cropClass}${masonryClass}${gapClass}"${aspectStyle ? ` style="${aspectStyle}"` : ''}>` +
       lqip +
-      `<img class="md-img-full" src="${escapeHtml(fullSrc)}" alt="${escapeHtml(alt)}" ` +
+      `<img class="md-img-full" src="${escapeHtml(responsive.src)}" ${srcSetAttrs}alt="${escapeHtml(alt)}" ` +
       `${dimAttrs}loading="lazy" decoding="async" />` +
       `</span>`
     )
   }
 
-  token.attrSet('src', fullSrc)
+  token.attrSet('src', responsive.src)
+  if (responsive.srcSet) {
+    token.attrSet('srcset', responsive.srcSet)
+    token.attrSet('sizes', responsive.sizes ?? '')
+  }
   if (titleMeta.align || titleMeta.size || titleMeta.crop || titleMeta.masonry) {
     const existing = token.attrGet('class')
     token.attrSet(
@@ -152,6 +167,12 @@ const headingIds = new Map<string, number>()
 
 md.core.ruler.push('heading_ids', (state) => {
   headingIds.clear()
+  // When rendering the continuation chunk of a split article, seed the counts
+  // from the earlier chunk so shared heading titles keep unique, stable ids.
+  const seed = (state.env as MarkdownRenderEnv | undefined)?.headingIdCounts
+  if (seed) {
+    for (const [baseId, count] of seed) headingIds.set(baseId, count)
+  }
   const tokens = state.tokens
 
   for (let i = 0; i < tokens.length; i++) {
@@ -343,8 +364,12 @@ function buildInfoboxHtml(inner: string, ownerDid?: string): string {
     return src
   }
 
-  const imageHtml = image
-    ? `<img class="infobox-image" src="${escapeHtml(rewriteImage(image))}" alt="" loading="lazy" decoding="async" />`
+  const infoboxImage = image ? responsiveImage(rewriteImage(image)) : null
+  const infoboxSrcSet = infoboxImage?.srcSet
+    ? `srcset="${escapeHtml(infoboxImage.srcSet)}" sizes="(max-width: 720px) 100vw, 240px" `
+    : ''
+  const imageHtml = infoboxImage
+    ? `<img class="infobox-image" src="${escapeHtml(infoboxImage.src)}" ${infoboxSrcSet}alt="" loading="eager" fetchpriority="high" decoding="async" />`
     : ''
   const captionHtml = caption
     ? `<div class="infobox-caption">${escapeHtml(caption)}</div>`
@@ -381,6 +406,9 @@ export function renderMarkdown(
       'id',
       'loading',
       'decoding',
+      'srcset',
+      'sizes',
+      'fetchpriority',
       'width',
       'height',
       'style',

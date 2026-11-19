@@ -25,13 +25,18 @@ const html = computed(() =>
 
 <style scoped>
 :deep(.wikilink) {
-  color: var(--pckt-red);
+  color: var(--pckt-blue);
   font-weight: 600;
   text-decoration: none;
 }
 
 :deep(.wikilink:hover) {
   text-decoration: underline;
+}
+
+:deep(.wikilink-missing) {
+  color: var(--pckt-red);
+  border-bottom: 1px dashed var(--pckt-red);
 }
 
 :deep(.wiki-editor-eol) {
