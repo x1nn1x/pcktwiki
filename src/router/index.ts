@@ -42,6 +42,14 @@ const ForumPage = () => import('@/pages/ForumPage.vue')
 const DockButtonPage = () => import('@/pages/DockButtonPage.vue')
 import { getCachedHandle } from '@/lib/atproto/handle-cache'
 import { parseAtUriParam } from '@/lib/atproto/permalinks'
+import { applyHostRouting } from '@/lib/host-routing'
+
+// Username subdomains (oseanstudio.allour.wiki) rewrite the address bar to
+// /by/<label> and /@<label>.bsky.social/... This has to run before
+// createWebHistory() below snapshots the initial location, so it belongs here
+// and not in main.ts, whose body runs only after every import has been
+// evaluated.
+applyHostRouting()
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),

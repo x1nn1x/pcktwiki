@@ -4,14 +4,9 @@ import router from './router'
 import { pinia } from './pinia'
 import { useAuthStore } from './stores/auth'
 import { setupInternalLinkNavigation } from './lib/internal-link-navigation'
-import { applyHostRouting } from './lib/host-routing'
 import { loadLocalTheme, applyWikiTheme, initSystemThemeListener } from './lib/theme'
 import './styles/theme.css'
 import './styles/wiki-visual-editor.css'
-
-// Username subdomains (oseanstudio.allour.wiki) rewrite the address bar to
-// the profile/wiki route before the router reads the initial location.
-applyHostRouting()
 
 const app = createApp(App)
 
