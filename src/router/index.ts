@@ -18,6 +18,8 @@ const HandleProfilePage = () => import('@/pages/HandleProfilePage.vue')
 const HandlePathRedirect = () => import('@/pages/HandlePathRedirect.vue')
 const FaqPage = () => import('@/pages/FaqPage.vue')
 const DonatePage = () => import('@/pages/DonatePage.vue')
+const StorePage = () => import('@/pages/StorePage.vue')
+const StoreThanksPage = () => import('@/pages/StoreThanksPage.vue')
 const GlobalSearchPage = () => import('@/pages/GlobalSearchPage.vue')
 const DashboardPage = () => import('@/pages/DashboardPage.vue')
 const CreateWikiPage = () => import('@/pages/CreateWikiPage.vue')
@@ -93,6 +95,16 @@ const router = createRouter({
       path: '/donate',
       name: 'donate',
       component: DonatePage,
+    },
+    {
+      path: '/store',
+      name: 'store',
+      component: StorePage,
+    },
+    {
+      path: '/store/thanks',
+      name: 'store-thanks',
+      component: StoreThanksPage,
     },
     {
       path: '/search',

@@ -277,3 +277,144 @@ export async function getCredits(env: Env, currency: string): Promise<CreditsRes
     oneTime: oneTime.results ?? [],
   }
 }
+
+/* ---------------------------------- store --------------------------------- */
+
+export interface StoreOrderItemInput {
+  productId: string
+  name: string
+  kind: string
+  amount: number
+  quantity: number
+}
+
+export interface StoreOrderInput {
+  eventId: string
+  sessionId: string
+  customerId: string | null
+  email: string | null
+  amount: number
+  currency: string
+  shipping: unknown
+  items: StoreOrderItemInput[]
+  /** Files to mint download tokens for, one per digital product. */
+  downloads: Array<{ productId: string; file: string }>
+  createdAt: string
+}
+
+/** How many times one download token may be used. */
+export const DOWNLOAD_LIMIT = 25
+
+/**
+ * Records a paid store order exactly once. The order insert is the gate: if
+ * Stripe retries the webhook, `meta.changes` is 0 and the line items and
+ * download tokens are left untouched, so a retry cannot mint new tokens.
+ */
+export async function recordStoreOrder(env: Env, input: StoreOrderInput): Promise<boolean> {
+  const inserted = await env.DB.prepare(
+    `INSERT INTO store_orders
+       (session_id, event_id, customer_id, email, amount, currency, shipping_json, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT(session_id) DO NOTHING`,
+  )
+    .bind(
+      input.sessionId,
+      input.eventId,
+      input.customerId,
+      input.email,
+      input.amount,
+      input.currency,
+      input.shipping ? JSON.stringify(input.shipping) : null,
+      input.createdAt,
+    )
+    .run()
+
+  if (!inserted.meta.changes) return false
+
+  const statements = [
+    ...input.items.map((item) =>
+      env.DB.prepare(
+        `INSERT INTO store_order_items (session_id, product_id, name, kind, amount, quantity)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(session_id, product_id) DO UPDATE SET quantity = excluded.quantity`,
+      ).bind(input.sessionId, item.productId, item.name, item.kind, item.amount, item.quantity),
+    ),
+    ...input.downloads.map((download) =>
+      env.DB.prepare(
+        `INSERT INTO store_downloads (token, session_id, product_id, file, downloads, created_at)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5)`,
+      ).bind(crypto.randomUUID().replace(/-/g, ''), input.sessionId, download.productId, download.file, input.createdAt),
+    ),
+  ]
+
+  if (statements.length) await env.DB.batch(statements)
+  return true
+}
+
+export interface StoreOrderView {
+  sessionId: string
+  amount: number
+  currency: string
+  createdAt: string
+  items: Array<{ productId: string; name: string; kind: string; amount: number; quantity: number }>
+  downloads: Array<{ name: string; token: string }>
+}
+
+export async function getStoreOrder(env: Env, sessionId: string): Promise<StoreOrderView | null> {
+  const order = await env.DB.prepare(
+    `SELECT session_id, amount, currency, created_at FROM store_orders WHERE session_id = ?1`,
+  )
+    .bind(sessionId)
+    .first<{ session_id: string; amount: number; currency: string; created_at: string }>()
+  if (!order) return null
+
+  const items = await env.DB.prepare(
+    `SELECT product_id, name, kind, amount, quantity
+       FROM store_order_items WHERE session_id = ?1 ORDER BY name`,
+  )
+    .bind(sessionId)
+    .all<{ product_id: string; name: string; kind: string; amount: number; quantity: number }>()
+
+  const downloads = await env.DB.prepare(
+    `SELECT token, product_id FROM store_downloads WHERE session_id = ?1`,
+  )
+    .bind(sessionId)
+    .all<{ token: string; product_id: string }>()
+
+  const nameFor = (productId: string) =>
+    items.results.find((item) => item.product_id === productId)?.name ?? productId
+
+  return {
+    sessionId: order.session_id,
+    amount: order.amount,
+    currency: order.currency,
+    createdAt: order.created_at,
+    items: items.results.map((item) => ({
+      productId: item.product_id,
+      name: item.name,
+      kind: item.kind,
+      amount: item.amount,
+      quantity: item.quantity,
+    })),
+    downloads: downloads.results.map((row) => ({ name: nameFor(row.product_id), token: row.token })),
+  }
+}
+
+/** File behind a download token, or null when the token is unknown/used up. */
+export async function redeemDownload(
+  env: Env,
+  token: string,
+): Promise<{ file: string; downloads: number } | null> {
+  const row = await env.DB.prepare(
+    `SELECT file, downloads FROM store_downloads WHERE token = ?1`,
+  )
+    .bind(token)
+    .first<{ file: string; downloads: number }>()
+  if (!row || row.downloads >= DOWNLOAD_LIMIT) return null
+
+  await env.DB.prepare(`UPDATE store_downloads SET downloads = downloads + 1 WHERE token = ?1`)
+    .bind(token)
+    .run()
+
+  return { file: row.file, downloads: row.downloads + 1 }
+}

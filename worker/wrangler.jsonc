@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "donations",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+      "database_id": "9e8d83d6-b415-4a55-8e6f-3f10e2433448"
     }
   ],
   // Fixed-window per-IP guard on /api/config and /api/donations/checkout
@@ -23,11 +23,14 @@
     }
   ],
   "vars": {
-    // Comma-separated origins allowed to call /api/config and
-    // /api/donations/checkout. Add your production URL and dev origin.
-    "ALLOWED_ORIGINS": "https://pckt.wiki,http://127.0.0.1:5173",
+    // Comma-separated origins allowed to call /api/config,
+    // /api/donations/checkout and /api/store/checkout. `https://*.allour.wiki`
+    // covers username subdomains.
+    "ALLOWED_ORIGINS": "https://pckt.wiki,https://allour.wiki,https://*.allour.wiki,http://127.0.0.1:5173",
     "CURRENCY": "usd",
-    "SITE_NAME": "pckt.wiki"
+    "SITE_NAME": "pckt.wiki",
+    // Used for Checkout return URLs: /store/thanks and /store.
+    "SITE_URL": "https://pckt.wiki"
   }
   // Secrets (never put these in vars): run
   //   npx wrangler secret put STRIPE_SECRET_KEY

@@ -1,8 +1,8 @@
-# Donations worker
+# Donations and store worker
 
 A small Cloudflare Worker + D1 database that gives pckt.wiki a live donations
 page — one-time and monthly support via Stripe, live totals, and an automatic
-supporters credits wall.
+supporters credits wall — and a storefront for merch and digital goods.
 
 The design copies two proven setups:
 
@@ -23,11 +23,41 @@ The design copies two proven setups:
 | POST | `/api/donations/checkout` | Create an Embedded Checkout Session → `{ clientSecret }` |
 | GET | `/api/donations/summary` | Total raised, supporter count, monthly total, recent activity |
 | GET | `/api/donations/credits` | Corporate / individual / past / one-time supporter lists |
+| POST | `/api/store/checkout` | Create a hosted Checkout Session for a cart → `{ url }` |
+| GET | `/api/store/order?session_id=…` | Items and download links for a paid order |
+| GET | `/api/store/download?token=…` | Redeem a download token (redirects to the file) |
 | POST | `/api/webhook` | Stripe webhook target (signature-verified) |
 
 `/api/donations/summary` and `/api/donations/credits` are public reads.
 `/api/config` and `/api/donations/checkout` only answer requests whose
-`Origin` is listed in `ALLOWED_ORIGINS`.
+`Origin` is listed in `ALLOWED_ORIGINS`. Store reads (`/api/store/order`,
+`/api/store/download`) stay public because the buyer arrives from Stripe
+without an account; their secrets are the session id and the random download
+token.
+
+## Store
+
+Products live in `src/catalog.ts`, not in Stripe. Each row carries an id, a
+price in cents, and a `kind`:
+
+| `kind` | Fulfilment |
+| --- | --- |
+| `physical` | You pack and post it. Checkout collects a shipping address. |
+| `pod` | Print-on-demand partner produces and ships it. Checkout collects a shipping address. |
+| `digital` | No shipping. The buyer gets a download token after payment. |
+
+Only rows without `active: false` are listed and orderable. Checkout sends
+inline `price_data`, so no Products or Prices need to exist in the Stripe
+dashboard before the first sale — and a tampered cart cannot change a price,
+because the browser only sends ids and quantities.
+
+Digital files are served through `/api/store/download?token=…`. Each token is
+random, belongs to one order and one product, and stops working after
+`DOWNLOAD_LIMIT` uses (`src/db.ts`). Point `file` at a public URL (R2, a
+release asset, or `https://pckt.wiki/downloads/…`).
+
+The storefront is `/store`; Stripe returns to `/store/thanks`. Both hide
+unless `VITE_DONATIONS_API_URL` is set, same as the donate page.
 
 ## Setup
 

@@ -1,5 +1,6 @@
 import Stripe from 'stripe'
 import type { Env } from './types'
+import { needsShipping, SHIPPING_COUNTRIES, type StoreProduct } from './catalog'
 
 let stripe: Stripe | null = null
 let cryptoProvider: Stripe.CryptoProvider | null = null
@@ -85,4 +86,60 @@ export async function createDonationCheckout(
   })
 
   return session.client_secret as string
+}
+
+export interface StoreCheckoutInput {
+  items: Array<{ product: StoreProduct; quantity: number }>
+  currency: string
+  /** Public site origin, e.g. https://pckt.wiki */
+  siteUrl: string
+  /** AT Protocol handle of a signed-in buyer, when known. */
+  buyerHandle?: string
+}
+
+/**
+ * Hosted Checkout for the store. A hosted session keeps shipping, tax and
+ * payment-method changes in Stripe's hands, and returns a URL the browser can
+ * simply navigate to. Physical and print-on-demand carts collect a shipping
+ * address; digital-only carts skip it.
+ */
+export async function createStoreCheckout(
+  stripe: Stripe,
+  input: StoreCheckoutInput,
+): Promise<string> {
+  const { items, currency, siteUrl } = input
+  const cart = items.map(({ product, quantity }) => `${product.id}:${quantity}`).join(',')
+  const metadata: Record<string, string> = { store: '1', cart }
+  if (input.buyerHandle) metadata.buyer_handle = input.buyerHandle
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: items.map(({ product, quantity }) => ({
+      quantity,
+      price_data: {
+        currency,
+        unit_amount: product.amount,
+        product_data: {
+          name: product.name,
+          ...(product.description ? { description: product.description } : {}),
+          ...(product.image ? { images: [product.image] } : {}),
+        },
+      },
+    })),
+    customer_creation: 'always',
+    allow_promotion_codes: true,
+    billing_address_collection: 'auto',
+    ...(needsShipping(items.map((item) => item.product))
+      ? {
+          shipping_address_collection: { allowed_countries: [...SHIPPING_COUNTRIES] },
+          phone_number_collection: { enabled: true },
+        }
+      : {}),
+    metadata,
+    success_url: `${siteUrl}/store/thanks?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${siteUrl}/store`,
+  })
+
+  if (!session.url) throw new Error('Stripe did not return a Checkout URL.')
+  return session.url
 }

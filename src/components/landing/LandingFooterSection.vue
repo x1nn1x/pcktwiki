@@ -2,6 +2,7 @@
 import { RouterLink } from 'vue-router'
 import MakeWikiLink from '@/components/MakeWikiLink.vue'
 import { isDonationsConfigured } from '@/lib/donations'
+import { isStoreConfigured } from '@/lib/store'
 </script>
 
 <template>
@@ -18,6 +19,7 @@ import { isDonationsConfigured } from '@/lib/donations'
       <nav class="landing-footer-links" aria-label="Related links">
         <RouterLink to="/wikis">Browse wikis</RouterLink>
         <RouterLink to="/faq">FAQ</RouterLink>
+        <RouterLink v-if="isStoreConfigured()" to="/store">Store</RouterLink>
         <RouterLink v-if="isDonationsConfigured()" to="/donate">Donate</RouterLink>
         <a href="https://pckt.blog" target="_blank" rel="noopener noreferrer">pckt.blog</a>
         <a href="https://lichen.wiki" target="_blank" rel="noopener noreferrer">lichen.wiki</a>
