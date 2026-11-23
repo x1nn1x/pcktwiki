@@ -7,9 +7,9 @@ describe('resolveHostRedirect', () => {
     expect(resolveHostRedirect('oseanstudio.allour.wiki', '')).toBe('/by/oseanstudio')
   })
 
-  it('treats the first path segment as the user’s wiki', () => {
+  it('sends a deep link through the label so custom handles can resolve', () => {
     expect(resolveHostRedirect('oseanstudio.allour.wiki', '/my-wiki/article')).toBe(
-      '/@oseanstudio.bsky.social/my-wiki/article',
+      '/by/oseanstudio/my-wiki/article',
     )
   })
 

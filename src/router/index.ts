@@ -15,6 +15,7 @@ import LandingPage from '@/pages/LandingPage.vue'
 const LearnPage = () => import('@/pages/LearnPage.vue')
 const BrowseWikisPage = () => import('@/pages/BrowseWikisPage.vue')
 const HandleProfilePage = () => import('@/pages/HandleProfilePage.vue')
+const HandlePathRedirect = () => import('@/pages/HandlePathRedirect.vue')
 const FaqPage = () => import('@/pages/FaqPage.vue')
 const DonatePage = () => import('@/pages/DonatePage.vue')
 const GlobalSearchPage = () => import('@/pages/GlobalSearchPage.vue')
@@ -75,6 +76,13 @@ const router = createRouter({
       path: '/by/:sub',
       name: 'handle-profile',
       component: HandleProfilePage,
+    },
+    {
+      // Deep links keep the label until it is resolved against the directory:
+      // mfzx.allour.wiki/wiki/page → /by/mfzx/wiki/page → /@mfzx.net/wiki/page
+      path: '/by/:sub/:pathMatch(.*)*',
+      name: 'handle-path',
+      component: HandlePathRedirect,
     },
     {
       path: '/faq',

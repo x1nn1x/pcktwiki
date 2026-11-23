@@ -13,7 +13,11 @@ Two pieces make this work:
 2. **The app** reads `window.location.hostname` before the router starts and
    rewrites:
    - `/` → `/by/<label>` (that person's wiki list)
-   - `/<wiki>/<page>` → `/@<label>.bsky.social/<wiki>/<page>`
+   - `/<wiki>/<page>` → `/by/<label>/<wiki>/<page>`
+
+   Deep links keep the label because it may name a custom-domain handle
+   (`mfzx.net`). A redirect route resolves it — `<label>.bsky.social` first,
+   then the public wiki directory — and continues to `/@<handle>/...`.
 
    See `src/lib/host-routing.ts`. The rewrite has to happen in the app: a
    proxy changes the upstream path but the browser still shows the original

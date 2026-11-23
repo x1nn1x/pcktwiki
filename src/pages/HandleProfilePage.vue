@@ -5,6 +5,7 @@ import WikiAvatar from '@/components/WikiAvatar.vue'
 import { getReadAgentForRepo, resolveHandleToDid } from '@/lib/atproto/auth'
 import { listWikis } from '@/lib/atproto/lichen'
 import { loadWikiDirectory, pdsHostFromHandle, type DirectoryWiki } from '@/lib/lichen/wiki-directory'
+import { defaultHandleForLabel } from '@/lib/lichen/subdomain-handle'
 import { formatDocumentDate } from '@/lib/standardsite/blog'
 import type { LichenWikiRecord } from '@/types/lichen'
 
@@ -32,7 +33,7 @@ const route = useRoute()
 
 const sub = computed(() => String(route.params.sub ?? '').trim().toLowerCase())
 const primaryHandle = computed(() =>
-  !sub.value ? '' : sub.value.includes('.') ? sub.value : `${sub.value}.bsky.social`,
+  !sub.value ? '' : sub.value.includes('.') ? sub.value : defaultHandleForLabel(sub.value),
 )
 
 const wikis = ref<ProfileWiki[]>([])

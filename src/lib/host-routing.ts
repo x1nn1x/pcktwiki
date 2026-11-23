@@ -48,8 +48,10 @@ export function resolveHostRedirect(hostname: string, pathname: string): string 
   const first = path.split('/')[1]?.toLowerCase() ?? ''
   if (!first || TOP_LEVEL_ROUTES.has(first)) return null
 
-  // `/my-wiki/article` is that user's wiki, not an app page.
-  return `/@${label}.bsky.social${path}`
+  // `/my-wiki/article` is that user's wiki, not an app page. Keep the label:
+  // a custom-domain handle (mfzx.net) can only be resolved through the public
+  // directory, which is async, so the router handles the hop to /@handle/...
+  return `/by/${label}${path}`
 }
 
 /** Rewrite the address bar before the router reads the initial location. */
