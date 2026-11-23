@@ -40,6 +40,8 @@ export interface CheckoutInput {
   }
   tierLabel: string | null
   siteName: string
+  /** Public site origin; embedded Checkout needs a return URL. */
+  siteUrl: string
 }
 
 /**
@@ -80,6 +82,10 @@ export async function createDonationCheckout(
       },
     ],
     metadata,
+    // Embedded Checkout always requires somewhere to return to. `if_required`
+    // keeps card payments inline; redirect-based methods come back here.
+    return_url: `${input.siteUrl}/donate`,
+    redirect_on_completion: 'if_required',
     ...(monthly
       ? { subscription_data: { metadata } }
       : { submit_type: 'donate' as const }),

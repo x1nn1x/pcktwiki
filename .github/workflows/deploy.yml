@@ -43,6 +43,8 @@ jobs:
           # deployments that do not go through GitHub Pages.
           VITE_SITE_URL: ${{ vars.SITE_URL || steps.pages.outputs.base_url }}
           SITE_NAME: ${{ vars.SITE_NAME }}
+          # Donations and store backend (see worker/). Unset hides both pages.
+          VITE_DONATIONS_API_URL: ${{ vars.DONATIONS_API_URL }}
           # The snapshot fetch's keep-alive sockets hold the event loop open and
           # the build never exits, so CI ships the committed snapshot instead;
           # local builds regenerate it.

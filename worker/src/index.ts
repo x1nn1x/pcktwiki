@@ -395,6 +395,7 @@ export default {
           donor: parsed.donor,
           tierLabel: parsed.interval === 'month' ? (tierForAmount(parsed.amount)?.label ?? null) : null,
           siteName: env.SITE_NAME ?? 'pckt.wiki',
+          siteUrl: (env.SITE_URL ?? 'https://allour.wiki').replace(/\/+$/, ''),
         })
         return json({ clientSecret }, siteCors)
       }

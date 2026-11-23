@@ -6,6 +6,11 @@
   "observability": {
     "enabled": true
   },
+  // Served under the same zone as the app; `api` is a reserved subdomain in
+  // the allour-subdomains proxy Worker, so the two routes cannot collide.
+  "routes": [
+    { "pattern": "api.allour.wiki/*", "zone_name": "allour.wiki" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
