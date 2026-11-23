@@ -415,7 +415,7 @@ export default {
         const checkoutUrl = await createStoreCheckout(getStripe(env), {
           items,
           currency: (env.CURRENCY ?? 'usd').toLowerCase(),
-          siteUrl: (env.SITE_URL ?? 'https://pckt.wiki').replace(/\/+$/, ''),
+          siteUrl: (env.SITE_URL ?? 'https://allour.wiki').replace(/\/+$/, ''),
           buyerHandle: parsed.handle || undefined,
         })
         return json({ url: checkoutUrl }, siteCors)

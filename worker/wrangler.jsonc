@@ -30,7 +30,7 @@
     "CURRENCY": "usd",
     "SITE_NAME": "pckt.wiki",
     // Used for Checkout return URLs: /store/thanks and /store.
-    "SITE_URL": "https://pckt.wiki"
+    "SITE_URL": "https://allour.wiki"
   }
   // Secrets (never put these in vars): run
   //   npx wrangler secret put STRIPE_SECRET_KEY

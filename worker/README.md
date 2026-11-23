@@ -116,7 +116,8 @@ npx wrangler secret put STRIPE_WEBHOOK_SECRET
 ### 4. Point the site at the worker
 
 In `wrangler.jsonc`, put your site's origin (and `http://127.0.0.1:5173` for
-local dev) in `ALLOWED_ORIGINS`, then redeploy. In the site repo, set:
+local dev) in `ALLOWED_ORIGINS`, and the public origin buyers return to after
+checkout in `SITE_URL`, then redeploy. In the site repo, set:
 
 ```sh
 VITE_DONATIONS_API_URL=https://<your-worker-url>
