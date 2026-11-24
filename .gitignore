@@ -32,3 +32,6 @@ dist-ssr
 # Local agent/tool state
 .claude/
 .zcode/
+
+# Local agent tooling (stripe agent setup, etc.)
+.agents/
