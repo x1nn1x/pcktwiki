@@ -16,6 +16,8 @@ describe('resolveHostRedirect', () => {
   it('leaves app routes and canonical paths alone', () => {
     expect(resolveHostRedirect('oseanstudio.allour.wiki', '/learn')).toBeNull()
     expect(resolveHostRedirect('oseanstudio.allour.wiki', '/wikis')).toBeNull()
+    expect(resolveHostRedirect('oseanstudio.allour.wiki', '/store')).toBeNull()
+    expect(resolveHostRedirect('oseanstudio.allour.wiki', '/store/thanks')).toBeNull()
     expect(resolveHostRedirect('oseanstudio.allour.wiki', '/by/oseanstudio')).toBeNull()
     expect(
       resolveHostRedirect('oseanstudio.allour.wiki', '/@oseanstudio.bsky.social/my-wiki'),

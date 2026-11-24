@@ -20,6 +20,7 @@ const TOP_LEVEL_ROUTES = new Set([
   'explore',
   'faq',
   'donate',
+  'store',
   'search',
   'library',
   'feed',
