@@ -6,6 +6,7 @@ export default defineConfig({
   // deployment URL import cleanly under the test runner.
   define: {
     __SITE_URL__: JSON.stringify('https://pckt.wiki/'),
+    __OAUTH_REDIRECT_URIS__: JSON.stringify(['https://pckt.wiki/']),
   },
   resolve: {
     alias: {

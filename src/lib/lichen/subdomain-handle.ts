@@ -3,11 +3,11 @@ import { loadWikiDirectory, type DirectoryWiki } from '@/lib/lichen/wiki-directo
 
 /**
  * One label of a username subdomain. `oseanstudio.allour.wiki` maps to
- * `oseanstudio.bsky.social`; a label can never contain a dot, so custom-domain
- * handles are only discoverable through the public wiki directory.
+ * `oseanstudio.bsky.social`. A custom-domain host arrives as the whole label
+ * (`joyboy.wiki`), so a dotted value is already the handle.
  */
 export function defaultHandleForLabel(label: string): string {
-  return `${label}.bsky.social`
+  return label.includes('.') ? label : `${label}.bsky.social`
 }
 
 /**

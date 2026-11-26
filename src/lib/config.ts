@@ -26,6 +26,25 @@ const SITE_URL = __SITE_URL__
 const PRODUCTION_CLIENT_ID = `${SITE_URL}client-metadata.json`
 const PRODUCTION_REDIRECT_URI = SITE_URL
 
+/**
+ * The redirect URI to finish a sign-in on. A custom-domain handle shares the
+ * canonical client-metadata.json, which lists every allowed origin; pick the
+ * one matching the page the user is actually on.
+ */
+function currentRedirectUri(): string {
+  if (typeof window === 'undefined') return PRODUCTION_REDIRECT_URI
+  const origin = window.location.origin
+  return (
+    __OAUTH_REDIRECT_URIS__.find((uri) => {
+      try {
+        return new URL(uri).origin === origin
+      } catch {
+        return false
+      }
+    }) ?? PRODUCTION_REDIRECT_URI
+  )
+}
+
 /** DNS-over-HTTPS resolver — works for handles on any PDS, including custom domains. */
 let handleResolver: HandleResolver | null = null
 
@@ -50,7 +69,7 @@ export function getOAuthConfig() {
 
   return {
     clientId: PRODUCTION_CLIENT_ID,
-    redirectUri: PRODUCTION_REDIRECT_URI,
+    redirectUri: currentRedirectUri(),
   }
 }
 

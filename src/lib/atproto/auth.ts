@@ -81,7 +81,12 @@ async function fetchHandle(agent: Agent): Promise<string | null> {
 export async function signIn(handle: string): Promise<void> {
   await initializeAuth()
   const client = await getOAuthClient()
-  await client.signInRedirect(handle)
+  // The library otherwise uses the first metadata redirect URI, which would
+  // finish a custom-domain sign-in on the canonical origin instead of this one.
+  const { redirectUri } = getOAuthConfig()
+  await client.signInRedirect(handle, {
+    redirect_uri: redirectUri as `https://${string}` | `http://127.0.0.1:${string}`,
+  })
 }
 
 export async function signOut(): Promise<void> {

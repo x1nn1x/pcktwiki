@@ -31,7 +31,7 @@
     // Comma-separated origins allowed to call /api/config,
     // /api/donations/checkout and /api/store/checkout. `https://*.allour.wiki`
     // covers username subdomains.
-    "ALLOWED_ORIGINS": "https://pckt.wiki,https://allour.wiki,https://*.allour.wiki,http://127.0.0.1:5173",
+    "ALLOWED_ORIGINS": "https://pckt.wiki,https://allour.wiki,https://*.allour.wiki,https://joyboy.wiki,http://127.0.0.1:5173",
     "CURRENCY": "usd",
     "SITE_NAME": "pckt.wiki",
     // Used for Checkout return URLs: /store/thanks and /store.

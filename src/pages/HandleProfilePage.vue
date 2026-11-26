@@ -11,12 +11,12 @@ import type { LichenWikiRecord } from '@/types/lichen'
 
 /**
  * `/by/:sub` — the wikis of one person, reached by a username subdomain
- * (`oseanstudio.allour.wiki`) or typed directly.
+ * (`oseanstudio.allour.wiki`), a custom-domain handle (`joyboy.wiki`), or typed
+ * directly.
  *
- * The subdomain label maps to the default Bluesky handle
- * (`oseanstudio.bsky.social`). Custom-domain handles are found by matching the
- * label against the public wiki directory, because there is no way to guess
- * which domain someone used.
+ * A bare label maps to the default Bluesky handle (`oseanstudio.bsky.social`).
+ * A dotted label is already a handle, so `joyboy.wiki` resolves directly;
+ * directory matching is only needed for `<label>.allour.wiki` → `mfzx.net`.
  */
 
 interface ProfileWiki {
@@ -186,10 +186,12 @@ watch(() => route.params.sub, load)
 
       <p v-else-if="!loading && !error" class="empty">
         No public wikis yet for <strong>@{{ resolvedHandle || primaryHandle }}</strong>.
-        <br />
-        Username subdomains point at the wikis of the matching Bluesky handle —
-        <code>{{ sub }}.allour.wiki</code> shows
-        <code>{{ sub }}.bsky.social</code>.
+        <template v-if="!sub.includes('.')">
+          <br />
+          Username subdomains point at the wikis of the matching Bluesky handle —
+          <code>{{ sub }}.allour.wiki</code> shows
+          <code>{{ sub }}.bsky.social</code>.
+        </template>
         <RouterLink to="/wikis">Browse every wiki →</RouterLink>
       </p>
     </div>

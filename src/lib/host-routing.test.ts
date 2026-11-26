@@ -36,4 +36,26 @@ describe('resolveHostRedirect', () => {
   it('supports the pckt.wiki root as well', () => {
     expect(resolveHostRedirect('oseanstudio.pckt.wiki', '/')).toBe('/by/oseanstudio')
   })
+
+  it('treats a custom-domain host as its own handle', () => {
+    expect(resolveHostRedirect('joyboy.wiki', '/')).toBe('/by/joyboy.wiki')
+    expect(resolveHostRedirect('joyboy.wiki', '')).toBe('/by/joyboy.wiki')
+    expect(resolveHostRedirect('joyboy.wiki', '/my-wiki/article')).toBe(
+      '/by/joyboy.wiki/my-wiki/article',
+    )
+  })
+
+  it('handles www and leaves app routes alone on a custom domain', () => {
+    expect(resolveHostRedirect('www.joyboy.wiki', '/')).toBe('/by/joyboy.wiki')
+    expect(resolveHostRedirect('joyboy.wiki', '/learn')).toBeNull()
+    expect(resolveHostRedirect('joyboy.wiki', '/store')).toBeNull()
+    expect(resolveHostRedirect('joyboy.wiki', '/by/joyboy.wiki')).toBeNull()
+    expect(resolveHostRedirect('joyboy.wiki', '/@joyboy.wiki/my-wiki')).toBeNull()
+  })
+
+  it('does not treat preview or multi-label hosts as custom handles', () => {
+    expect(resolveHostRedirect('xox.github.io', '/')).toBeNull()
+    expect(resolveHostRedirect('pcktwiki.pages.dev', '/')).toBeNull()
+    expect(resolveHostRedirect('a.b.allour.wiki', '/')).toBeNull()
+  })
 })

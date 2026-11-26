@@ -1,27 +1,29 @@
-# Username subdomains: `oseanstudio.allour.wiki`
+# Username subdomains and custom-domain handles
 
-A request to `https://<label>.allour.wiki/` shows the wikis of the Bluesky
-handle `<label>.bsky.social` (or a custom-domain handle whose first label
-matches, such as `oseanstudio.com`).
+Two kinds of host are served by this Worker:
 
-Two pieces make this work:
+- **Username subdomains** — `oseanstudio.allour.wiki` shows the wikis of
+  `oseanstudio.bsky.social` (or a custom-domain handle whose first label
+  matches, such as `oseanstudio.com`).
+- **Custom-domain handles** — `joyboy.wiki` shows the wikis of `@joyboy.wiki`.
+  The whole host is the handle; list it in `CUSTOM` in `worker.js`.
 
-1. **This Worker** proxies every `<label>.allour.wiki` request to
-   `https://allour.wiki` with the same path. It exists because GitHub Pages
-   serves one custom domain and cannot issue certificates for arbitrary
-   subdomains on its own; Cloudflare's wildcard certificate can.
-2. **The app** reads `window.location.hostname` before the router starts and
-   rewrites:
-   - `/` → `/by/<label>` (that person's wiki list)
-   - `/<wiki>/<page>` → `/by/<label>/<wiki>/<page>`
+A request to either is proxied to `https://allour.wiki` with the same path. The
+Worker exists because GitHub Pages serves one custom domain and cannot issue
+certificates for arbitrary hosts on its own; Cloudflare's certificates can.
 
-   Deep links keep the label because it may name a custom-domain handle
-   (`mfzx.net`). A redirect route resolves it — `<label>.bsky.social` first,
-   then the public wiki directory — and continues to `/@<handle>/...`.
+The app reads `window.location.hostname` before the router starts and rewrites:
 
-   See `src/lib/host-routing.ts`. The rewrite has to happen in the app: a
-   proxy changes the upstream path but the browser still shows the original
-   URL, and Vue Router reads the address bar.
+- `/` → `/by/<label>` (that person's wiki list)
+- `/<wiki>/<page>` → `/by/<label>/<wiki>/<page>`
+
+Deep links keep the label because it may name a custom-domain handle
+(`mfzx.net`). A redirect route resolves it — the handle itself first, then the
+public wiki directory — and continues to `/@<handle>/...`.
+
+See `src/lib/host-routing.ts`. The rewrite has to happen in the app: a proxy
+changes the upstream path but the browser still shows the original URL, and Vue
+Router reads the address bar.
 
 ## Setup
 
@@ -63,7 +65,57 @@ npx wrangler deploy worker.js \
 
 Add `--route '*.pckt.wiki/*'` as well if needed.
 
-### 3. Verify
+### 3. Custom-domain handle (`joyboy.wiki`)
+
+A domain a person owns can be their handle and their wiki host at once. The
+domain must be a zone on the same Cloudflare account — Workers routes only
+attach to zones Cloudflare serves — so move its nameservers to Cloudflare first.
+
+1. **Before switching DNS**, copy the `_atproto` TXT record. Bluesky's handle
+   check follows the nameservers, so recreate it in Cloudflare or the handle
+   breaks. It is one record: `_atproto` `TXT` `did=did:plc:…`.
+2. Add `joyboy.wiki` as a zone and set the registrar's nameservers to the pair
+   Cloudflare shows.
+3. Add a proxied apex record. A dummy `A @ 192.0.2.1` (orange cloud **on**) is
+   enough when the Worker route handles every request.
+4. Add `joyboy.wiki` to `CUSTOM` in `worker.js`, then deploy with the extra
+   route:
+
+   ```sh
+   npx wrangler deploy worker.js \
+     --name allour-subdomains \
+     --compatibility-date 2026-01-01 \
+     --route '*.allour.wiki/*' \
+     --route 'joyboy.wiki/*'
+   ```
+
+5. Build the site so the custom origin can finish OAuth sign-in:
+
+   ```sh
+   VITE_SITE_URL=https://allour.wiki/ \
+   VITE_OAUTH_REDIRECT_URIS=https://joyboy.wiki/ \
+   npm run build
+   ```
+
+   The generated `client-metadata.json` then lists both origins. On GitHub
+   Pages, set the repository variable `OAUTH_REDIRECT_URIS` to
+   `https://joyboy.wiki/` instead of passing it by hand.
+
+6. Keep GitHub Pages' custom domain at `allour.wiki`. The Worker proxies
+   `joyboy.wiki` to it; no second Pages site is needed.
+
+Verify:
+
+```sh
+curl -sI https://joyboy.wiki/ | head -5
+curl -s  https://joyboy.wiki/ | grep -o '<title>[^<]*</title>'
+```
+
+The handle itself is verified separately in Bluesky (Settings → Account →
+Handle → I have my own domain). The `_atproto` TXT record is independent of the
+web records, so it works whether the web traffic is proxied or redirected.
+
+### 4. Verify a subdomain
 
 ```sh
 curl -sI https://oseanstudio.allour.wiki/ | head -5
@@ -78,7 +130,7 @@ article.
 ## Caching notes
 
 - The Worker returns the origin response untouched, so GitHub Pages' asset
-  cache headers continue to apply per subdomain.
+  cache headers continue to apply per host.
 - Nothing is cached per label; two subdomains share the origin cache but not
   the browser cache, which is what you want because the app renders the
   profile client-side.

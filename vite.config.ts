@@ -57,6 +57,27 @@ const base = siteUrl.pathname
 const clientId = `${siteUrl.href}client-metadata.json`
 
 /**
+ * Additional origins that may finish an OAuth sign-in — a custom-domain handle
+ * proxied to this deployment (`https://joyboy.wiki/`). Every redirect URI must
+ * appear in client-metadata.json or the PDS rejects the request.
+ */
+const extraRedirectUris = (siteEnv.VITE_OAUTH_REDIRECT_URIS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map((value) => {
+    const url = new URL(value)
+    if (url.protocol !== 'https:') {
+      throw new Error(`VITE_OAUTH_REDIRECT_URIS must use https:// (got: ${value})`)
+    }
+    url.hash = ''
+    url.search = ''
+    if (!url.pathname.endsWith('/')) url.pathname += '/'
+    return url.href
+  })
+const redirectUris = [siteUrl.href, ...extraRedirectUris.filter((uri) => uri !== siteUrl.href)]
+
+/**
  * A custom domain needs a CNAME file; *.github.io does not (and writing one
  * there would fight the repository's own Pages settings).
  */
@@ -93,7 +114,7 @@ function siteConfigPlugin(): Plugin {
         logo_uri: `${siteUrl.href}android-chrome-512x512.png`,
         policy_uri: siteUrl.href,
         tos_uri: siteUrl.href,
-        redirect_uris: [siteUrl.href],
+        redirect_uris: redirectUris,
         scope: OAUTH_SCOPE,
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
@@ -281,6 +302,7 @@ export default defineConfig({
     // Read by src/lib/config.ts so the app's OAuth client id is the same string
     // the emitted client-metadata.json advertises.
     __SITE_URL__: JSON.stringify(siteUrl.href),
+    __OAUTH_REDIRECT_URIS__: JSON.stringify(redirectUris),
   },
   // Keep Vite caches on a local disk, not Dropbox.
   cacheDir: viteCacheDir,
