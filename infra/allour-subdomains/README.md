@@ -77,16 +77,19 @@ attach to zones Cloudflare serves — so move its nameservers to Cloudflare firs
 2. Add `joyboy.wiki` as a zone and set the registrar's nameservers to the pair
    Cloudflare shows.
 3. Add a proxied apex record. A dummy `A @ 192.0.2.1` (orange cloud **on**) is
-   enough when the Worker route handles every request.
+   enough when the Worker route handles every request. Do the same for `www`,
+   and give each host its own route — a route without a wildcard host matches
+   only that hostname.
 4. Add `joyboy.wiki` to `CUSTOM` in `worker.js`, then deploy with the extra
-   route:
+   routes:
 
    ```sh
    npx wrangler deploy worker.js \
      --name allour-subdomains \
      --compatibility-date 2026-01-01 \
      --route '*.allour.wiki/*' \
-     --route 'joyboy.wiki/*'
+     --route 'joyboy.wiki/*' \
+     --route 'www.joyboy.wiki/*'
    ```
 
 5. Build the site so the custom origin can finish OAuth sign-in:
